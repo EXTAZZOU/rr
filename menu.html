@@ -2,260 +2,841 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>logit</title>
+<title>Logit — Rob Run</title>
 <style>
-/* Colle ici ton @font-face Space Grotesk si tu le gardes.
-   Les tailles ci-dessous sont calibrées pour la pile système. */
+/* Polices d'origine retirées ici : deux blocs @font-face base64
+   (Space Grotesk et Inter, poids 100-900). À recoller depuis Google Fonts
+   si tu les veux ; les piles --mono et --disp ci-dessous prennent le relais. */
 
 :root{
-  --bg:#0b0b0d;--text:#efeff1;--muted:#8e8e98;--faint:#5c5c66;
-  --line:#ffffff0f;--line2:#ffffff1a;--lime:#C8F751;
+  color-scheme:dark;
+  --bg:#050506;
+  --panel:#0a0a0c;
+  --panel-2:#0f0f12;
+  --line:#ffffff12;
+  --line-2:#ffffff22;
+  --hair:#ffffff0a;
+  --text:#ededf0;
+  --muted:#8b8b95;
+  --faint:#55555e;
+  --accent:#2EFF9E;
+  --accent-dim:#2EFF9E55;
+  --accent-soft:#2EFF9E1a;
+  --ok:#3dffa0;
+  --warn:#ffb020;
+  --mono:'Cascadia Mono','JetBrains Mono',Consolas,ui-monospace,monospace;
+  --disp:'Space Grotesk','Segoe UI',sans-serif;
+  --side:204px;
 }
 *{box-sizing:border-box}
-html,body{margin:0;height:100%;background:transparent;overflow:hidden}
-body{font:12.5px/1.45 'Inter','Segoe UI',system-ui,sans-serif;color:var(--text);
-  -webkit-font-smoothing:antialiased;user-select:none}
+html,body{height:100%}
+body{
+  margin:0;background:transparent;color:var(--text);
+  font:12px/1.4 var(--mono);
+  -webkit-font-smoothing:antialiased;overflow:hidden;
+}
+button,input,select,output{font:inherit;color:inherit}
+::selection{background:var(--accent);color:#000}
 
-#app{position:fixed;inset:0;display:flex;overflow:hidden;
-  background:var(--bg);border:1px solid var(--line2);border-radius:10px}
+/* ── window ─────────────────────────────────────────── */
+#app{
+  position:fixed;inset:0;display:flex;flex-direction:column;
+  background:
+    linear-gradient(#ffffff05 1px,transparent 1px) 0 0/100% 28px,
+    linear-gradient(90deg,#ffffff05 1px,transparent 1px) 0 0/28px 100%,
+    radial-gradient(700px 380px at 100% 0,#2EFF9E1c,transparent 65%),
+    radial-gradient(500px 300px at 0 100%,#2EFF9E10,transparent 65%),
+    var(--bg);
+  border:1px solid var(--line-2);border-radius:3px;overflow:hidden;isolation:isolate;
+  box-shadow:0 30px 90px #000d;
+}
+/* scanlines */
+#app::after{
+  content:"";position:absolute;inset:0;pointer-events:none;z-index:50;opacity:.35;
+  background:repeating-linear-gradient(0deg,transparent 0 2px,#00000030 2px 3px);
+}
+/* corner brackets */
+.cnr{position:absolute;width:16px;height:16px;z-index:60;pointer-events:none;border:2px solid var(--accent);filter:drop-shadow(0 0 6px var(--accent))}
+.cnr.tl{top:-1px;left:-1px;border-right:0;border-bottom:0}
+.cnr.tr{top:-1px;right:-1px;border-left:0;border-bottom:0}
+.cnr.bl{bottom:-1px;left:-1px;border-right:0;border-top:0}
+.cnr.br{bottom:-1px;right:-1px;border-left:0;border-top:0}
 
-/* ---------- sidebar ---------- */
-aside{width:184px;flex:none;display:flex;flex-direction:column;padding:14px 10px 10px;border-right:1px solid var(--line)}
-.wm{display:flex;align-items:center;gap:8px;padding:2px 4px 14px}
-.wm .m{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;
-  background:var(--lime);color:#000;font:800 13px/1 'Inter',sans-serif}
-.wm b{font:700 15px/1 'Inter',sans-serif;letter-spacing:-.04em}
-.wm small{margin-left:auto;font-size:9.5px;font-weight:600;color:var(--faint)}
-.search{display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;border-radius:8px;
-  background:#ffffff0a;color:var(--faint);font-size:11.5px;margin-bottom:12px}
-.search svg{width:12px;height:12px;opacity:.65;flex:none}
-nav{display:flex;flex-direction:column;gap:1px}
-nav a{display:flex;align-items:center;gap:10px;height:34px;padding:0 9px;border-radius:7px;
-  color:var(--muted);font-size:12px;font-weight:500;cursor:pointer;text-decoration:none;
-  transition:background .13s,color .13s}
-nav a svg{width:14px;height:14px;opacity:.75;flex:none}
-nav a:hover{background:#ffffff08;color:var(--text)}
-nav a[aria-current]{background:#ffffff0d;color:#fff}
-nav a[aria-current] svg{opacity:1;color:var(--lime)}
-.sess{margin-top:auto;padding-top:12px;border-top:1px solid var(--line)}
-.sess div{display:flex;justify-content:space-between;align-items:center;height:20px;
-  font-size:10.5px;color:var(--faint)}
-.sess div b{color:var(--muted);font-weight:600}
-.live{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-weight:600}
-.live u{width:5px;height:5px;border-radius:50%;background:var(--lime);text-decoration:none}
+/* ── title bar ──────────────────────────────────────── */
+header{
+  position:relative;display:flex;align-items:center;gap:12px;flex:none;
+  height:38px;padding:0 8px 0 14px;
+  border-bottom:1px solid var(--line-2);background:#000000b3;
+  touch-action:none;user-select:none;cursor:grab;
+}
+header.dragging{cursor:grabbing}
+header::after{
+  content:"";position:absolute;left:0;bottom:-1px;height:1px;width:38%;
+  background:linear-gradient(90deg,var(--accent),transparent);
+  animation:sweep 5s linear infinite;
+}
+@keyframes sweep{0%{transform:translateX(-100%)}100%{transform:translateX(265%)}}
+.brand{display:flex;align-items:baseline;gap:10px;min-width:0;white-space:nowrap}
+.brand b{font:700 13px var(--disp);letter-spacing:.22em;text-transform:uppercase}
+.brand b i{font-style:normal;color:var(--accent);text-shadow:0 0 12px var(--accent)}
+.brand span{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+.brand span::before{content:"// "}
+.spacer{flex:1}
+.tag{
+  font-size:9px;letter-spacing:.16em;text-transform:uppercase;padding:2px 7px;
+  color:var(--accent);border:1px solid var(--accent-dim);background:var(--accent-soft);
+}
+.hact{display:flex;align-items:center;gap:4px}
+.btn{
+  height:24px;padding:0 12px;border:1px solid var(--line-2);border-radius:0;
+  background:transparent;color:var(--muted);cursor:pointer;
+  font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+  transition:color .12s,border-color .12s,background .12s;
+}
+.btn:hover{color:#fff;border-color:var(--accent);background:var(--accent-soft)}
+.btn:active{transform:translateY(1px)}
+.btn.icon{width:24px;padding:0;font-size:15px;line-height:1}
+.btn.icon:hover{background:var(--accent);color:#000}
+.btn:focus-visible{outline:1px solid var(--accent);outline-offset:2px}
 
-/* ---------- main ---------- */
-main{flex:1;min-width:0;display:flex;flex-direction:column;padding:14px 0 0}
-.bar{display:flex;align-items:center;gap:10px;padding:0 18px 12px}
-.bar h1{margin:0;font:600 14px 'Inter',sans-serif;letter-spacing:-.02em}
-.bar h1 span{color:var(--faint);font-weight:400}
-.bar .sp{flex:1}
-.preset{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:7px;
-  background:#ffffff0a;color:var(--muted);font-size:11.5px;font-weight:500;border:0;cursor:pointer}
-.preset:hover{color:var(--text);background:#ffffff11}
-.ib{width:28px;height:28px;display:grid;place-items:center;border:0;border-radius:7px;
-  background:transparent;color:var(--muted);cursor:pointer}
-.ib:hover{background:#ffffff0a;color:var(--text)}
+/* ── layout ─────────────────────────────────────────── */
+.body{display:flex;flex:1;min-height:0}
+.col{display:flex;flex-direction:column;flex:1;min-width:0}
 
-.tabs{display:flex;padding:0 18px;border-bottom:1px solid var(--line2)}
-.tabs button{height:31px;padding:0 13px;border:0;background:transparent;color:var(--faint);
-  font:600 11.5px 'Inter',sans-serif;cursor:pointer}
-.tabs button:hover{color:var(--muted)}
-.tabs button[aria-selected="true"]{color:#fff}
+/* ── side panel ─────────────────────────────────────── */
+aside{
+  width:var(--side);flex:none;display:flex;flex-direction:column;
+  border-right:1px solid var(--line-2);background:#00000080;
+}
+.mark{
+  display:grid;place-items:center;height:118px;border-bottom:1px solid var(--line);
+  background:
+    radial-gradient(circle at 50% 50%,#2EFF9E26,transparent 62%),
+    repeating-linear-gradient(135deg,transparent 0 7px,#ffffff05 7px 8px);
+}
+.mark svg{width:62px;height:62px;filter:drop-shadow(0 0 14px #2EFF9E99);animation:breathe 3.2s ease-in-out infinite}
+@keyframes breathe{50%{filter:drop-shadow(0 0 22px #2EFF9E)}}
+.kv{padding:10px 14px;border-bottom:1px solid var(--line)}
+.kv h3{margin:0 0 7px;font:600 9px var(--mono);letter-spacing:.2em;text-transform:uppercase;color:var(--faint)}
+.kv h3::before{content:"▸ ";color:var(--accent)}
+.kv div{display:flex;justify-content:space-between;align-items:center;gap:8px;height:21px;font-size:10.5px;color:var(--muted)}
+.kv div > b{font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kv div > b.hot{color:var(--accent)}
+.pill{display:inline-flex;align-items:center;gap:6px;color:var(--muted);white-space:nowrap}
+.pill i{width:6px;height:6px;background:var(--faint);flex:none}
+.pill em{font-style:normal;color:var(--text)}
+.pill[data-live="1"] i{background:var(--ok);box-shadow:0 0 8px var(--ok);animation:blink 1.4s steps(2) infinite}
+.pill[data-live="1"] em{color:var(--ok)}
+@keyframes blink{50%{opacity:.35}}
+.dot{display:inline-block;width:6px;height:6px;background:var(--faint);margin-right:6px}
+.dot[data-live="1"]{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+aside .cfg{margin-top:auto;display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:12px 14px}
+aside .cfg .btn{height:28px;padding:0}
 
-.thead{display:flex;justify-content:space-between;padding:9px 18px 7px;
-  font:600 9.5px 'Inter',sans-serif;letter-spacing:.11em;text-transform:uppercase;color:var(--faint)}
-.rows{flex:1;overflow-y:auto;padding:0 18px 16px}
-.rows::-webkit-scrollbar{width:7px}
-.rows::-webkit-scrollbar-thumb{background:#ffffff17;border-radius:4px}
-.cap{font:600 9.5px 'Inter',sans-serif;letter-spacing:.11em;text-transform:uppercase;
-  color:var(--faint);padding:13px 0 6px}
-.cap:first-child{padding-top:4px}
+/* ── tab strip ──────────────────────────────────────── */
+nav{
+  display:flex;flex:none;height:40px;border-bottom:1px solid var(--line-2);
+  background:#00000066;counter-reset:tab;overflow-x:auto;
+}
+nav::-webkit-scrollbar{height:0}
+nav button{
+  position:relative;flex:1;min-width:86px;display:flex;align-items:center;justify-content:center;gap:8px;
+  border:0;border-right:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer;
+  font:600 11px var(--disp);letter-spacing:.18em;text-transform:uppercase;
+  counter-increment:tab;transition:color .15s,background .15s;
+}
+nav button::before{content:counter(tab,decimal-leading-zero);font:500 9px var(--mono);letter-spacing:0;color:var(--faint);transition:color .15s}
+nav button::after{
+  content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--accent);
+  box-shadow:0 0 12px var(--accent);transform:scaleX(0);transition:transform .22s cubic-bezier(.2,.8,.2,1);
+}
+nav button svg{display:none}
+nav button:hover{color:var(--text);background:#ffffff06}
+nav button[aria-selected="true"]{color:#fff;background:linear-gradient(180deg,transparent,#2EFF9E24)}
+nav button[aria-selected="true"]::before{color:var(--accent)}
+nav button[aria-selected="true"]::after{transform:scaleX(1)}
+nav button:focus-visible{outline:1px solid var(--accent);outline-offset:-3px}
 
-.r{display:flex;align-items:center;gap:11px;min-height:40px;padding:3px 0;
-  border-bottom:1px solid var(--line);cursor:pointer;color:var(--muted)}
-.r:hover{color:var(--text)}
-.r>span{flex:1;min-width:0;font-size:12.5px}
-.r small{display:block;font-size:11px;color:var(--faint)}
-.r input{position:absolute;opacity:0;width:0;height:0}
-.tg{order:-1;flex:none;width:34px;height:19px;border-radius:99px;background:#ffffff16;
-  position:relative;transition:background .15s}
-.tg::after{content:"";position:absolute;top:3px;left:3px;width:13px;height:13px;border-radius:50%;
-  background:#fff;transition:transform .17s}
-input:checked+.tg{background:var(--lime)}
-input:checked+.tg::after{transform:translateX(15px);background:#0b0b0d}
-.r:has(input:checked){color:var(--text)}
-.chev{width:20px;height:20px;flex:none;display:grid;place-items:center;color:var(--faint);border-radius:5px}
-.chev:hover{background:#ffffff0d;color:var(--text)}
+/* ── pages ──────────────────────────────────────────── */
+main{flex:1;min-width:0;overflow-y:auto;overflow-x:hidden;padding:14px 16px 16px;scrollbar-gutter:stable}
+main::-webkit-scrollbar{width:8px}
+main::-webkit-scrollbar-thumb{background:#ffffff1c}
+main::-webkit-scrollbar-thumb:hover{background:var(--accent)}
+main::-webkit-scrollbar-track{background:transparent}
+main > section:not([hidden]){animation:page .22s ease-out}
+@keyframes page{from{opacity:0;transform:translateX(10px)}}
 
-.sl{display:block;padding:8px 0 10px;border-bottom:1px solid var(--line)}
-.sl .h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;
-  font-size:12.5px;color:var(--muted)}
-.sl output{font-size:11.5px;font-weight:600;color:var(--text);font-variant-numeric:tabular-nums}
-input[type=range]{-webkit-appearance:none;width:100%;height:14px;background:transparent;cursor:pointer}
-input[type=range]::-webkit-slider-runnable-track{height:3px;border-radius:99px;
-  background:linear-gradient(90deg,#d7d7dc 0,#d7d7dc var(--p,0%),#ffffff1a var(--p,0%))}
-input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;
-  border-radius:50%;background:#fff;margin-top:-4.5px}
+.phead{display:flex;align-items:baseline;gap:12px;padding:0 0 12px;min-width:0}
+.phead h1{margin:0;flex:none;font:700 20px var(--disp);letter-spacing:.14em;text-transform:uppercase;color:#fff}
+.phead h1::before{content:"> ";color:var(--accent)}
+.phead h1::after{content:"_";color:var(--accent);animation:blink 1s steps(2) infinite}
+.phead p{margin:0;color:var(--faint);font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
-.seg{display:grid;grid-template-columns:repeat(5,1fr);gap:3px;padding:6px 0 10px}
-.seg label{position:relative;display:grid;place-items:center;height:28px;border-radius:6px;
-  background:#ffffff0a;color:var(--faint);font-size:11px;cursor:pointer}
-.seg label:hover{color:var(--text);background:#ffffff11}
-.seg input{position:absolute;opacity:0;width:0;height:0}
-.seg label:has(input:checked){background:#ffffff1a;color:#fff}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
+.card{
+  position:relative;border:1px solid var(--line);background:#0a0a0ccc;padding:0 0 4px;
+  transition:border-color .15s;
+}
+.card::before,.card::after{content:"";position:absolute;width:8px;height:8px;border:1px solid var(--accent);opacity:.55;transition:opacity .15s}
+.card::before{top:-1px;left:-1px;border-right:0;border-bottom:0}
+.card::after{bottom:-1px;right:-1px;border-left:0;border-top:0}
+.card:hover{border-color:var(--line-2)}
+.card:hover::before,.card:hover::after{opacity:1}
+.card > h2{
+  display:flex;align-items:center;gap:8px;margin:0 0 4px;padding:8px 12px;
+  border-bottom:1px solid var(--line);background:#ffffff05;
+  font:600 9.5px var(--mono);letter-spacing:.2em;text-transform:uppercase;color:var(--muted);
+}
+.card > h2::before{content:"";width:3px;height:10px;background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.card > h2::after{content:"";flex:1;height:1px;background:repeating-linear-gradient(90deg,var(--line-2) 0 3px,transparent 3px 6px)}
+.card > .rows{padding:0 6px 4px}
+.card > p{margin:0;padding:4px 12px 8px;color:var(--faint);font-size:10.5px;line-height:1.5}
+.card > p::before{content:"# ";color:var(--accent-dim)}
 
-/* ---------- preview ---------- */
-.prev{width:200px;flex:none;padding:14px;display:flex;flex-direction:column;gap:9px;
-  border-left:1px solid var(--line)}
-.prev .cap{padding:0 0 0 1px}
-.stage{flex:1;border-radius:8px;overflow:hidden;position:relative;
-  border:1px solid var(--line);background:linear-gradient(#232833,#181b22 60%,#101218)}
-.stage::before{content:"";position:absolute;inset:auto 0 0 0;height:40%;
-  background:linear-gradient(#0c0e13,#14171d)}
-.stage svg{position:absolute;inset:0;width:100%;height:100%}
-.hb{fill:var(--lime)}
-.hn{font:700 9.5px 'Inter',sans-serif;letter-spacing:.08em;text-transform:uppercase;
-  fill:#0b0b0d;text-anchor:middle}
-.hd{font:600 9.5px 'Inter',sans-serif;letter-spacing:.05em;fill:var(--text);text-anchor:middle}
-.legend{display:flex;gap:10px;font-size:9.5px;font-weight:600;letter-spacing:.07em;
-  text-transform:uppercase;color:var(--faint)}
-.legend u{width:6px;height:6px;border-radius:99px;display:inline-block;margin-right:4px;
-  text-decoration:none}
+/* toggle rows: LED box on the left */
+.row{
+  display:flex;align-items:center;gap:10px;min-height:28px;padding:3px 6px;cursor:pointer;
+  color:var(--muted);transition:background .1s,color .1s;
+}
+.row:hover{background:#ffffff08;color:var(--text)}
+.row > span{display:flex;flex-direction:column;min-width:0;flex:1}
+.row small{color:var(--faint);font-size:9.5px;line-height:1.3}
+.row input[type=checkbox]{position:absolute;opacity:0;width:0;height:0;pointer-events:none}
+i.sw{
+  order:-1;flex:none;position:relative;width:13px;height:13px;border:1px solid #ffffff33;background:#000;
+  transition:border-color .12s,box-shadow .12s;
+}
+i.sw::after{content:"";position:absolute;inset:2px;background:var(--accent);transform:scale(0);transition:transform .14s cubic-bezier(.2,1.4,.4,1)}
+input[type=checkbox]:checked + i.sw{border-color:var(--accent);box-shadow:0 0 10px var(--accent-dim)}
+input[type=checkbox]:checked + i.sw::after{transform:scale(1)}
+input[type=checkbox]:focus-visible + i.sw{outline:1px solid #fff;outline-offset:2px}
+.row:has(input:checked){color:#fff}
+.row:has(input[type=checkbox])::after{
+  content:"OFF";flex:none;font-size:9px;letter-spacing:.12em;color:var(--faint);
+}
+.row:has(input:checked)::after{content:"ON";color:var(--accent);text-shadow:0 0 8px var(--accent)}
+.row:has(select){cursor:default}
 
-@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+/* sliders */
+.srow{display:block;padding:6px 6px 8px;cursor:default}
+.srow .top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:3px}
+.srow .top > span{color:var(--muted);font-size:11.5px}
+.srow output{flex:none;font-size:11px;color:var(--accent);font-variant-numeric:tabular-nums}
+.srow output::before{content:"[ ";color:var(--faint)}
+.srow output::after{content:" ]";color:var(--faint)}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:16px;background:transparent;cursor:pointer;display:block}
+input[type=range]::-webkit-slider-runnable-track{
+  height:6px;
+  background:
+    repeating-linear-gradient(90deg,transparent 0 5px,#050506 5px 7px),
+    linear-gradient(90deg,var(--accent) 0,var(--accent) var(--pct,0%),#ffffff1c var(--pct,0%),#ffffff1c 100%);
+}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:5px;height:16px;margin-top:-5px;border-radius:0;
+  background:#fff;border:0;box-shadow:0 0 10px var(--accent),0 0 0 1px #000;
+}
+input[type=range]:focus-visible{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{background:var(--accent)}
+
+/* chips */
+.chips{display:flex;flex-wrap:wrap;gap:5px;padding:6px 12px 10px}
+.chip{
+  position:relative;display:inline-flex;align-items:center;height:24px;padding:0 10px;
+  border:1px solid var(--line-2);background:#000;color:var(--faint);
+  font-size:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;transition:all .12s;
+}
+.chip input{position:absolute;opacity:0;width:0;height:0}
+.chip:hover{color:var(--text);border-color:#ffffff44}
+.chip:has(input:checked){color:#fff;border-color:var(--accent);background:var(--accent-soft);box-shadow:inset 0 -2px 0 var(--accent)}
+.chip:has(input:focus-visible){outline:1px solid #fff;outline-offset:2px}
+
+/* misc controls */
+.status{display:flex;align-items:center;justify-content:space-between;margin:4px 12px 6px;padding-top:8px;border-top:1px dashed var(--line-2);color:var(--faint);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase}
+.status output{color:var(--text)}
+.status output[data-bad="1"]{color:var(--warn)}
+.bind{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:34px;padding:3px 6px;color:var(--muted)}
+.bind button{
+  min-width:104px;height:24px;padding:0 10px;border:1px solid var(--line-2);border-radius:0;background:#000;
+  color:var(--text);cursor:pointer;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+}
+.bind button::before{content:"[ ";color:var(--faint)}
+.bind button::after{content:" ]";color:var(--faint)}
+.bind button:hover{border-color:var(--accent);color:var(--accent)}
+.bind button.arm{border-color:var(--accent);color:#000;background:var(--accent);animation:blink .7s steps(2) infinite}
+select{
+  -webkit-appearance:none;appearance:none;height:24px;padding:0 24px 0 9px;border:1px solid var(--line-2);border-radius:0;
+  background:#000 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0h8L4 5z' fill='%232EFF9E'/%3E%3C/svg%3E") no-repeat right 8px center;
+  color:var(--text);cursor:pointer;font-size:10.5px;max-width:170px;
+}
+select:hover,select:focus-visible{border-color:var(--accent);outline:none}
+select option{background:#0a0a0c}
+.swatch{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:34px;padding:3px 6px;color:var(--muted)}
+.swatch:hover{background:#ffffff08;color:var(--text)}
+.swatch .meta{display:flex;align-items:baseline;gap:10px}
+.swatch .hex{font-size:10px;color:var(--faint)}
+input[type=color]{width:46px;height:18px;padding:0;border:1px solid var(--line-2);border-radius:0;background:#000;cursor:pointer}
+input[type=color]:hover{border-color:#fff}
+input[type=color]::-webkit-color-swatch-wrapper{padding:2px}
+input[type=color]::-webkit-color-swatch{border:0;border-radius:0}
+.legend{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px;padding:6px 12px 10px}
+.legend span{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:10.5px}
+.legend i{width:8px;height:8px;background:var(--c);flex:none;box-shadow:0 0 8px var(--c)}
+
+/* ── status bar ─────────────────────────────────────── */
+footer{
+  display:flex;align-items:center;gap:10px;flex:none;height:24px;padding:0 12px;
+  border-top:1px solid var(--line-2);background:#000000cc;
+  color:var(--faint);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+}
+footer .keys{margin-left:auto;display:flex;gap:14px;white-space:nowrap}
+footer .keys b{font-weight:500;color:var(--accent);margin-right:4px}
+footer .keys b::before{content:"["}
+footer .keys b::after{content:"]"}
+#preview{display:none;color:var(--warn)}
+body[data-preview="1"] #preview{display:inline}
+
+/* toast */
+#toast{
+  position:absolute;right:14px;top:50px;transform:translateX(16px);z-index:70;
+  max-width:70%;padding:7px 12px;border:1px solid var(--line-2);border-left:3px solid var(--accent);
+  background:#000e;color:var(--text);font-size:11px;box-shadow:0 10px 30px #000c;
+  opacity:0;pointer-events:none;transition:opacity .16s,transform .16s;
+}
+#toast.up{opacity:1;transform:none}
+
+@media (max-width:820px){ aside{display:none} }
+@media (max-width:620px){
+  .grid{grid-template-columns:minmax(0,1fr)}
+  .brand span,.tag{display:none}
+  .phead p{display:none}
+  footer .keys span:nth-child(n+3){display:none}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
 <body>
 <div id="app">
+  <i class="cnr tl"></i><i class="cnr tr"></i><i class="cnr bl"></i><i class="cnr br"></i>
 
-  <aside>
-    <div class="wm"><span class="m">l</span><b>logit</b><small>2.4</small></div>
-    <div class="search">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
-      Search...
+  <header id="head">
+    <div class="brand"><b>Log</b><b style="color:var(--accent)">it</b><span>Rob Run</span></div>
+    <span class="tag">Private build</span>
+    <div class="spacer"></div>
+    <div class="hact">
+      <button class="btn icon" id="close" type="button" aria-label="Close menu" title="Close (Esc)">&times;</button>
     </div>
-    <nav id="nav">
-      <a href="#" data-t="combat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 8l4-4 12 12-4 4z"/></svg>Combat</a>
-      <a href="#" data-t="overlay" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="16" r="3"/><path d="M8 11v5M16 13V8"/></svg>Overlay</a>
-      <a href="#" data-t="loot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 9l8-5 8 5v6l-8 5-8-5z"/></svg>Loot</a>
-      <a href="#" data-t="vehicles"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="7" width="18" height="10" rx="3"/><circle cx="8" cy="17" r="2"/><circle cx="16" cy="17" r="2"/></svg>Vehicles</a>
-    </nav>
-    <div class="sess">
-      <div><span>session</span><span class="live"><u></u>7 seen</span></div>
-      <div><span>target</span><b>ROB RUN</b></div>
-      <div><span>channel</span><b>PRIVATE</b></div>
+  </header>
+
+  <div class="body">
+    <aside>
+      <div class="mark">
+        <svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
+          <!-- Logit: sigmoid curve with an activation dot on the axis -->
+          <path d="M6 36 Q 20 36 24 24 T 42 12"
+                stroke="#2EFF9E" stroke-width="4" stroke-linecap="round" fill="none"/>
+          <circle cx="24" cy="24" r="5" fill="#050506" stroke="#ededf0" stroke-width="2"/>
+        </svg>
+      </div>
+      <div class="kv">
+        <h3>Session</h3>
+        <div><span>status</span><span class="pill" id="pill" data-live="0" role="status"><i aria-hidden="true"></i><em>No game</em></span></div>
+        <div><span>target</span><b>ROB RUN</b></div>
+        <div><span>channel</span><b class="hot">PRIVATE</b></div>
+      </div>
+      <div class="kv">
+        <h3>Hotkeys</h3>
+        <div><span>menu</span><b>F1</b></div>
+        <div><span>overlay</span><b>INSERT</b></div>
+        <div><span>exit</span><b>END</b></div>
+      </div>
+      <div class="cfg">
+        <button class="btn" id="save" type="button">Save</button>
+        <button class="btn" id="load" type="button">Load</button>
+      </div>
+    </aside>
+
+    <div class="col">
+      <nav id="rail" role="tablist" aria-label="Menu sections">
+        <button type="button" role="tab" data-tab="players" aria-selected="true" aria-controls="players" tabindex="0">Players</button>
+        <button type="button" role="tab" data-tab="labels" aria-selected="false" aria-controls="labels" tabindex="-1">Labels</button>
+        <button type="button" role="tab" data-tab="loot" aria-selected="false" aria-controls="loot" tabindex="-1">Loot</button>
+        <button type="button" role="tab" data-tab="aim" aria-selected="false" aria-controls="aim" tabindex="-1">Aim</button>
+        <button type="button" role="tab" data-tab="radar" aria-selected="false" aria-controls="radar" tabindex="-1">Radar</button>
+        <button type="button" role="tab" data-tab="colors" aria-selected="false" aria-controls="colors" tabindex="-1">Colors</button>
+      </nav>
+
+      <main id="pages">
+
+        <section id="players" role="tabpanel" aria-label="Players">
+          <div class="phead"><h1>Players</h1><p>What the overlay draws around other characters, and how it decides who counts as friendly.</p></div>
+          <div class="grid">
+            <article class="card">
+              <h2>Visibility</h2>
+              <div class="rows">
+                <label class="row"><span>Enable overlay<small>Master switch for every ESP layer</small></span><input type="checkbox" data-key="enabled" checked><i class="sw"></i></label>
+                <label class="row"><span>Show own character</span><input type="checkbox" data-key="show_self"><i class="sw"></i></label>
+                <label class="row"><span>Clan members<small>Drawn in the clan colour</small></span><input type="checkbox" data-key="show_clan" checked><i class="sw"></i></label>
+                <label class="row"><span>Police coworkers</span><input type="checkbox" data-key="show_police" checked><i class="sw"></i></label>
+              </div>
+              <p>Civilian grey, citizen green, cop blue, robber red.</p>
+            </article>
+            <article class="card">
+              <h2>Rendering</h2>
+              <div class="rows">
+                <label class="row"><span>Boxes</span><input type="checkbox" data-key="show_box" checked><i class="sw"></i></label>
+                <label class="row"><span>Skeleton</span><input type="checkbox" data-key="show_skeleton" checked><i class="sw"></i></label>
+                <label class="row"><span>Head marker</span><input type="checkbox" data-key="show_head" checked><i class="sw"></i></label>
+                <label class="row"><span>Chams<small>Highlights the body through geometry</small></span><input type="checkbox" data-key="cham_on"><i class="sw"></i></label>
+                <label class="row"><span>HP bar<small>Vertical gauge next to the box, red to green</small></span><input type="checkbox" data-key="show_hpbar" checked><i class="sw"></i></label>
+                <label class="row"><span>Dim occluded<small>Fades enemies behind walls</small></span><input type="checkbox" data-key="los_dim"><i class="sw"></i></label>
+                <label class="row"><span>Streamer-safe<small>Overlay invisible to OBS, Discord screen share &amp; screenshots</small></span><input type="checkbox" data-key="streamsafe_on" checked><i class="sw"></i></label>
+              </div>
+            </article>
+            <article class="card">
+              <h2>Vehicles</h2>
+              <div class="rows">
+                <label class="row"><span>Vehicle chams</span><input type="checkbox" data-key="vehicle_chams"><i class="sw"></i></label>
+                <label class="row"><span>Vehicle markers</span><input type="checkbox" data-key="show_vehicle_markers"><i class="sw"></i></label>
+                <label class="row"><span>Vehicle occupants<small>Only when seat data is readable</small></span><input type="checkbox" data-key="show_vehicle_occupants"><i class="sw"></i></label>
+              </div>
+              <p>Seated characters use the vehicle transform; skeletons are suppressed in a car.</p>
+            </article>
+            <article class="card">
+              <h2>Ranges</h2>
+              <div class="rows">
+                <label class="srow"><span class="top"><span>ESP range</span><output></output></span><input type="range" min="0" max="2000" step="10" value="300" data-key="max_distance" data-scale="100" data-unit=" m"></label>
+                <label class="srow"><span class="top"><span>Skeleton range</span><output></output></span><input type="range" min="0" max="2000" step="10" value="150" data-key="skel_distance" data-scale="100" data-unit=" m"></label>
+                <label class="srow"><span class="top"><span>Line width</span><output></output></span><input type="range" min="1" max="4" step="1" value="1" data-key="line_w" data-unit=" px"></label>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section id="labels" role="tabpanel" aria-label="Labels" hidden>
+          <div class="phead"><h1>Labels</h1><p>Text attached to each marker. Every line costs vertical space, so enable only what you read mid-fight.</p></div>
+          <div class="grid">
+            <article class="card">
+              <h2>Text lines</h2>
+              <div class="rows">
+                <label class="row"><span>Names<small>Not replicated for remote players in this build</small></span><input type="checkbox" data-key="show_name" checked><i class="sw"></i></label>
+                <label class="row"><span>Held weapon</span><input type="checkbox" data-key="show_weapon" checked><i class="sw"></i></label>
+                <label class="row"><span>Distance</span><input type="checkbox" data-key="show_distance" checked><i class="sw"></i></label>
+                <label class="row"><span>Armor<small>Shows an A badge when armoured</small></span><input type="checkbox" data-key="show_armor" checked><i class="sw"></i></label>
+                <label class="row"><span>Crouching</span><input type="checkbox" data-key="show_crouch"><i class="sw"></i></label>
+                <label class="row"><span>Health<small>Local player only; remote health is not replicated</small></span><input type="checkbox" data-key="show_health"><i class="sw"></i></label>
+              </div>
+            </article>
+            <article class="card">
+              <h2>Preview</h2>
+              <p>How the stack reads on a target, top to bottom:</p>
+              <div class="legend" style="grid-template-columns:minmax(0,1fr)">
+                <span><i style="--c:#9298a5"></i>Name, or the marker id if unnamed</span>
+                <span><i style="--c:#ffb020"></i>Weapon label, armour badge</span>
+                <span><i style="--c:#a5ff36"></i>Distance in metres</span>
+              </div>
+              <p>Distance is measured from the camera, matching what the game reports, not from the character root.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="loot" role="tabpanel" aria-label="Loot" hidden>
+          <div class="phead"><h1>Loot</h1><p>World items, containers and nodes, filtered by rarity. Rarity filters apply to loose items and loot nodes alike.</p></div>
+          <div class="grid">
+            <article class="card">
+              <h2>Sources</h2>
+              <div class="rows">
+                <label class="row"><span>Loose items</span><input type="checkbox" data-key="show_loot"><i class="sw"></i></label>
+                <label class="row"><span>Loot nodes</span><input type="checkbox" data-key="show_loot_nodes"><i class="sw"></i></label>
+                <label class="row"><span>Containers</span><input type="checkbox" data-key="show_containers"><i class="sw"></i></label>
+                <label class="row"><span>Doors</span><input type="checkbox" data-key="show_doors"><i class="sw"></i></label>
+                <label class="row"><span>Dropped loot</span><input type="checkbox" data-key="show_dropped_loot"><i class="sw"></i></label>
+                <label class="row"><span>Vehicle loot</span><input type="checkbox" data-key="show_vehicle_loot"><i class="sw"></i></label>
+              </div>
+            </article>
+            <article class="card">
+              <h2>Rarity filter</h2>
+              <div class="chips">
+                <label class="chip"><input type="checkbox" data-key="loot_tier_none" checked>No rarity</label>
+                <label class="chip"><input type="checkbox" data-key="loot_tier_common" checked>Common</label>
+                <label class="chip"><input type="checkbox" data-key="loot_tier_uncommon" checked>Uncommon</label>
+                <label class="chip"><input type="checkbox" data-key="loot_tier_rare" checked>Rare</label>
+                <label class="chip"><input type="checkbox" data-key="loot_tier_epic" checked>Epic</label>
+                <label class="chip"><input type="checkbox" data-key="loot_tier_legendary" checked>Legendary</label>
+                <label class="chip"><input type="checkbox" data-key="loot_tier_exotic" checked>Exotic</label>
+              </div>
+              <p>Unchecking a tier hides it everywhere it is drawn, including dropped and vehicle loot.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="aim" role="tabpanel" aria-label="Aim" hidden>
+          <div class="phead"><h1>Aim</h1><p>Moves the mouse toward a joint inside the FOV circle. It uses the same camera as the ESP, so it costs no extra reads.</p></div>
+          <div class="grid">
+            <article class="card">
+              <h2>Targeting</h2>
+              <div class="rows">
+                <label class="row"><span>Aim assist<small>Hold the bound key to engage</small></span><input type="checkbox" data-key="aa_on"><i class="sw"></i></label>
+                <label class="row"><span>Draw FOV circle</span><input type="checkbox" data-key="aa_show_fov" checked><i class="sw"></i></label>
+                <label class="row"><span>Visible only<small>Skip targets behind collision geometry</small></span><input type="checkbox" data-key="aa_los_on"><i class="sw"></i></label>
+                <label class="row"><span>Closest target first</span><input type="checkbox" data-key="aa_closest_first"><i class="sw"></i></label>
+                <label class="row"><span>Target clan members</span><input type="checkbox" data-key="aa_target_clan"><i class="sw"></i></label>
+                <label class="row"><span>Target police coworkers</span><input type="checkbox" data-key="aa_target_police"><i class="sw"></i></label>
+              </div>
+              <div class="status"><span>Collision data</span><output id="los">Off</output></div>
+            </article>
+            <article class="card">
+              <h2>Control</h2>
+              <div class="rows">
+                <div class="row">
+                  <span>Target group<small>Nearest joint inside the group</small></span>
+                  <select data-key="aa_bone">
+                    <option value="0">Head</option>
+                    <option value="1">Neck &amp; shoulders</option>
+                    <option value="2">Chest &amp; spine</option>
+                    <option value="3">Pelvis &amp; hips</option>
+                    <option value="4">Closest body joint</option>
+                    <option value="5">Arms</option>
+                    <option value="6">Legs</option>
+                    <option value="7">Face</option>
+                    <option value="8">Hands &amp; fingers</option>
+                    <option value="9">Feet &amp; toes</option>
+                  </select>
+                </div>
+                <div class="bind"><span>Hold key</span><button id="bind" type="button">Alt</button></div>
+                <label class="srow"><span class="top"><span>FOV radius</span><output></output></span><input type="range" min="30" max="600" step="5" value="150" data-key="aa_fov_px" data-unit=" px"></label>
+                <label class="srow"><span class="top"><span>Smoothing</span><output></output></span><input type="range" min="1" max="10" step="1" value="5" data-key="aa_smooth"></label>
+                <label class="srow"><span class="top"><span>Aim range</span><output></output></span><input type="range" min="0" max="1000" step="10" value="0" data-key="aa_dist" data-unit=" m"></label>
+              </div>
+            </article>
+
+            <article class="card">
+              <h2>Crosshair &amp; snapline</h2>
+              <div class="rows">
+                <label class="row"><span>Custom crosshair<small>Overlay crosshair at screen centre</small></span><input type="checkbox" data-key="xhair_on"><i class="sw"></i></label>
+                <div class="row" style="cursor:default">
+                  <span>Style</span>
+                  <select data-key="xhair_style">
+                    <option value="0">Dot</option>
+                    <option value="1" selected>Cross</option>
+                    <option value="2">Circle</option>
+                    <option value="3">T shape</option>
+                  </select>
+                </div>
+                <label class="srow"><span class="top"><span>Size</span><output></output></span><input type="range" min="2" max="40" step="1" value="8" data-key="xhair_size" data-unit=" px"></label>
+                <label class="srow"><span class="top"><span>Thickness</span><output></output></span><input type="range" min="1" max="4" step="1" value="1" data-key="xhair_thick" data-unit=" px"></label>
+                <label class="row"><span>Outline</span><input type="checkbox" data-key="xhair_outline" checked><i class="sw"></i></label>
+                <label class="row"><span>Snap line<small>Thin line from the crosshair to the closest visible enemy</small></span><input type="checkbox" data-key="show_snapline"><i class="sw"></i></label>
+              </div>
+            </article>
+
+            <article class="card">
+              <h2>Recoil &amp; spread</h2>
+              <div class="rows">
+                <label class="row"><span>No recoil<small>Clamps the shot kick each tick</small></span><input type="checkbox" data-key="norecoil_on"><i class="sw"></i></label>
+                <label class="srow"><span class="top"><span>Intensity</span><output></output></span><input type="range" min="0" max="100" step="1" value="100" data-key="norecoil_intensity" data-unit=" %"></label>
+                <label class="srow"><span class="top"><span>Jitter</span><output></output></span><input type="range" min="0" max="20" step="1" value="0" data-key="norecoil_jitter" data-unit=" px"></label>
+                <label class="row"><span>No spread<small>Zeros the fake-spread model (hipfire + air + move)</small></span><input type="checkbox" data-key="nospread_on"><i class="sw"></i></label>
+              </div>
+              <p>Keep intensity under 100 or add a few pixels of jitter if the server starts flagging perfect sprays.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="radar" role="tabpanel" aria-label="Radar" hidden>
+          <div class="phead"><h1>Radar</h1><p>A top-down plot centred on you. The top of the circle is where you are looking.</p></div>
+          <div class="grid">
+            <article class="card">
+              <h2>Settings</h2>
+              <div class="rows">
+                <label class="row"><span>Show radar</span><input type="checkbox" data-key="radar_on" checked><i class="sw"></i></label>
+                <label class="row"><span>Include world markers<small>Loot, containers, doors and vehicles</small></span><input type="checkbox" data-key="radar_world"><i class="sw"></i></label>
+                <label class="srow"><span class="top"><span>Radar range</span><output></output></span><input type="range" min="25" max="500" step="5" value="150" data-key="radar_range" data-unit=" m"></label>
+              </div>
+              <p>The outer ring marks the selected range. The centre arrow is you; downed players are drawn as hollow dots.</p>
+            </article>
+            <article class="card">
+              <h2>Legend</h2>
+              <div class="legend">
+                <span><i style="--c:#da99ff"></i>Clan</span>
+                <span><i style="--c:#56fff6"></i>Police coworkers</span>
+                <span><i style="--c:#5aaaff"></i>Police</span>
+                <span><i style="--c:#ff5656"></i>Robbers</span>
+                <span><i style="--c:#ebebeb"></i>Loose items</span>
+                <span><i style="--c:#c99bff"></i>Loot nodes</span>
+                <span><i style="--c:#ffbe5c"></i>Containers</span>
+                <span><i style="--c:#c8c8c8"></i>Doors</span>
+                <span><i style="--c:#6fe891"></i>Dropped loot</span>
+                <span><i style="--c:#69b2ff"></i>Vehicle loot</span>
+                <span><i style="--c:#ffd66e"></i>Vehicles</span>
+              </div>
+              <p>The visibility switches on the Players page also apply here.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="colors" role="tabpanel" aria-label="Colors" hidden>
+          <div class="phead"><h1>Colors</h1><p>Marker palette. Role colours follow the character's role; the slots below are the shared ones.</p></div>
+          <div class="grid">
+            <article class="card">
+              <h2>Markers</h2>
+              <div class="rows">
+                <div class="swatch"><span class="meta"><span>Default marker</span><span class="hex">#56A8FF</span></span><input type="color" value="#56a8ff" data-color="0"></div>
+                <div class="swatch"><span class="meta"><span>Downed marker</span><span class="hex">#FFFFFF</span></span><input type="color" value="#ffffff" data-color="5"></div>
+                <div class="swatch"><span class="meta"><span>Name</span><span class="hex">#FFFFFF</span></span><input type="color" value="#ffffff" data-color="6"></div>
+              </div>
+            </article>
+            <article class="card">
+              <h2>Labels &amp; reticle</h2>
+              <div class="rows">
+                <div class="swatch"><span class="meta"><span>Weapon</span><span class="hex">#FFFFFF</span></span><input type="color" value="#ffffff" data-color="7"></div>
+                <div class="swatch"><span class="meta"><span>Distance</span><span class="hex">#FFFFFF</span></span><input type="color" value="#ffffff" data-color="8"></div>
+                <div class="swatch"><span class="meta"><span>Armor</span><span class="hex">#FFFFFF</span></span><input type="color" value="#ffffff" data-color="9"></div>
+                <div class="swatch"><span class="meta"><span>Aim circle</span><span class="hex">#C5A7FF</span></span><input type="color" value="#c5a7ff" data-color="14"></div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+      </main>
     </div>
-  </aside>
-
-  <main>
-    <div class="bar">
-      <h1>Players <span>/ overlay</span></h1>
-      <span class="sp"></span>
-      <button class="preset">Preset 01</button>
-      <button class="ib" aria-label="Settings">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" width="14" height="14"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
-      </button>
-    </div>
-
-    <div class="tabs" id="tabs">
-      <button aria-selected="true" data-p="actors">Actors</button>
-      <button aria-selected="false" data-p="markers">Markers</button>
-      <button aria-selected="false" data-p="ranges">Ranges</button>
-    </div>
-
-    <!-- ACTORS -->
-    <div class="thead" data-page="actors"><span>Type</span><span>Enable</span></div>
-    <div class="rows" data-page="actors">
-      <div class="cap">Draw</div>
-      <label class="r"><input type="checkbox" checked><i class="tg"></i><span>Hollow skeleton</span><i class="chev">⌄</i></label>
-      <label class="r"><input type="checkbox" checked><i class="tg"></i><span>Name plate</span><i class="chev">⌄</i></label>
-      <label class="r"><input type="checkbox" checked><i class="tg"></i><span>Distance</span><i class="chev">⌄</i></label>
-      <label class="r"><input type="checkbox"><i class="tg"></i><span>Leader line</span><i class="chev">⌄</i></label>
-
-      <div class="cap">State</div>
-      <label class="r"><input type="checkbox" checked><i class="tg"></i><span>Accent when occluded</span><i class="chev">⌄</i></label>
-      <label class="r"><input type="checkbox" checked><i class="tg"></i><span>Fade with distance</span><i class="chev">⌄</i></label>
-      <label class="r"><input type="checkbox"><i class="tg"></i><span>Hide own character</span><i class="chev">⌄</i></label>
-
-      <div class="cap">Tuning</div>
-      <label class="sl"><span class="h"><span>Line weight</span><output>1.0</output></span>
-        <input type="range" min="5" max="30" value="10" data-div="10" data-dec="1"></label>
-      <label class="sl"><span class="h"><span>Text scale</span><output>100 %</output></span>
-        <input type="range" min="60" max="160" value="100" data-suffix=" %"></label>
-    </div>
-
-    <!-- MARKERS -->
-    <div class="thead" data-page="markers" hidden><span>Element</span><span>Enable</span></div>
-    <div class="rows" data-page="markers" hidden>
-      <div class="cap">Groups</div>
-      <label class="r"><input type="checkbox" checked><i class="tg"></i><span>Criminals</span><i class="chev">⌄</i></label>
-      <label class="r"><input type="checkbox" checked><i class="tg"></i><span>Cops</span><i class="chev">⌄</i></label>
-      <label class="r"><input type="checkbox" checked><i class="tg"></i><span>Civilians / settlers</span><i class="chev">⌄</i></label>
-      <label class="r"><input type="checkbox" checked><i class="tg"></i><span>Clan / party</span><i class="chev">⌄</i></label>
-      <div class="cap">Extras</div>
-      <label class="r"><input type="checkbox"><i class="tg"></i><span>Armour indicator</span><i class="chev">⌄</i></label>
-      <label class="r"><input type="checkbox"><i class="tg"></i><span>Held weapon</span><i class="chev">⌄</i></label>
-      <label class="r"><input type="checkbox"><i class="tg"></i><span>Off-screen arrows</span><i class="chev">⌄</i></label>
-    </div>
-
-    <!-- RANGES -->
-    <div class="thead" data-page="ranges" hidden><span>Range</span><span>Metres</span></div>
-    <div class="rows" data-page="ranges" hidden>
-      <div class="cap">Distances</div>
-      <label class="sl"><span class="h"><span>Marker range</span><output>300 m</output></span>
-        <input type="range" min="0" max="2000" step="10" value="300" data-suffix=" m"></label>
-      <label class="sl"><span class="h"><span>Skeleton range</span><output>150 m</output></span>
-        <input type="range" min="0" max="2000" step="10" value="150" data-suffix=" m"></label>
-      <label class="sl"><span class="h"><span>Fade start</span><output>120 m</output></span>
-        <input type="range" min="0" max="500" step="10" value="120" data-suffix=" m"></label>
-      <div class="cap">Density</div>
-      <label class="sl"><span class="h"><span>Max on screen</span><output>64</output></span>
-        <input type="range" min="8" max="256" step="8" value="64"></label>
-    </div>
-  </main>
-
-  <div class="prev">
-    <div class="cap">Preview</div>
-    <div class="stage">
-      <svg viewBox="0 0 172 320" preserveAspectRatio="xMidYMid slice">
-        <rect class="hb" x="58" y="8" width="56" height="14" rx="4"/>
-        <text class="hn" x="86" y="18">Unknown</text>
-        <path d="M86 23v12" stroke="#C8F751" stroke-width="1"/>
-        <g stroke="#fff" stroke-width="1.15" fill="none" stroke-linecap="round">
-          <circle cx="86" cy="43" r="8"/>
-          <path d="M86 52v30M86 61l-16 9M86 61l16 9M86 82l-12 22M86 82l12 22M86 52l-12 24-3 25M86 52l12 24 3 25"/>
-          <path d="M70 70l-8 16M102 70l8 16"/>
-        </g>
-        <g fill="#C8F751">
-          <rect x="74" y="252" width="6" height="2.5" rx="1"/>
-          <rect x="82" y="252" width="6" height="2.5" rx="1"/>
-          <rect x="90" y="252" width="6" height="2.5" rx="1"/>
-          <rect x="98" y="252" width="3" height="2.5" rx="1" opacity=".4"/>
-        </g>
-        <text class="hd" x="86" y="273">24 m</text>
-      </svg>
-    </div>
-    <div class="legend"><span><u style="background:#C8F751"></u>Occluded</span><span><u style="background:#fff"></u>Visible</span></div>
   </div>
+
+  <footer>
+    <span><span class="dot" id="fdot" aria-hidden="true"></span><span id="game">Waiting for game</span></span>
+    <span id="preview">Preview</span>
+    <span class="keys">
+      <span><b>F1</b>menu</span>
+      <span><b>Insert</b>overlay</span>
+      <span><b>End</b>exit</span>
+    </span>
+  </footer>
+
+  <div id="toast" role="status" aria-live="polite"></div>
 </div>
 
 <script>
-const tabs=[...document.querySelectorAll('#tabs button')];
-const pages=[...document.querySelectorAll('[data-page]')];
-tabs.forEach(b=>b.onclick=()=>{
-  tabs.forEach(x=>x.setAttribute('aria-selected',x===b));
-  pages.forEach(p=>p.hidden=p.dataset.page!==b.dataset.p);
+"use strict";
+const bridge = window.chrome && window.chrome.webview;
+const send = message => { if (bridge) bridge.postMessage(message); };
+const $ = id => document.getElementById(id);
+const all = (selector, root) => Array.prototype.slice.call((root || document).querySelectorAll(selector));
+
+if (!bridge) document.body.dataset.preview = "1";
+
+/* Pages. */
+const tabs = all("#rail [data-tab]");
+function activate(tab, focus) {
+  for (const candidate of tabs) {
+    const active = candidate === tab;
+    candidate.setAttribute("aria-selected", String(active));
+    candidate.tabIndex = active ? 0 : -1;
+    const page = $(candidate.dataset.tab);
+    if (page) page.hidden = !active;
+  }
+  $("pages").scrollTop = 0;
+  if (focus) tab.focus();
+}
+for (const tab of tabs) {
+  tab.addEventListener("click", () => activate(tab));
+}
+$("rail").addEventListener("keydown", event => {
+  const index = tabs.indexOf(document.activeElement);
+  if (index < 0) return;
+  let next = -1;
+  if (event.key === "ArrowDown" || event.key === "ArrowRight") next = (index + 1) % tabs.length;
+  else if (event.key === "ArrowUp" || event.key === "ArrowLeft") next = (index - 1 + tabs.length) % tabs.length;
+  else if (event.key === "Home") next = 0;
+  else if (event.key === "End") next = tabs.length - 1;
+  if (next >= 0) { event.preventDefault(); activate(tabs[next], true); }
 });
 
-document.querySelectorAll('input[type=range]').forEach(r=>{
-  const out=r.closest('.sl').querySelector('output');
-  const paint=()=>{
-    r.style.setProperty('--p',((r.value-r.min)/(r.max-r.min)*100)+'%');
-    if(out) out.textContent=(r.value/(r.dataset.div||1)).toFixed(r.dataset.dec||0)+(r.dataset.suffix||'');
-  };
-  r.oninput=paint;paint();
+/* Controls. */
+const controls = all("[data-key]");
+
+function paintRange(input) {
+  const min = Number(input.min), max = Number(input.max), value = Number(input.value);
+  const percent = max > min ? ((value - min) / (max - min)) * 100 : 0;
+  input.style.setProperty("--pct", percent.toFixed(2) + "%");
+  const output = input.parentElement.querySelector("output");
+  if (!output) return;
+  const unit = input.dataset.unit || "";
+  output.textContent = (unit === " m" && value === 0) ? "Unlimited" : value + unit;
+}
+
+function wire(input) {
+  if (input.type === "range") paintRange(input);
+  const eventName = input.type === "range" ? "input" : "change";
+  input.addEventListener(eventName, () => {
+    if (input.type === "range") paintRange(input);
+    const raw = input.type === "checkbox" ? (input.checked ? 1 : 0)
+                                         : Math.round(Number(input.value) * Number(input.dataset.scale || 1));
+    send("set:" + input.dataset.key + ":" + raw);
+  });
+}
+controls.forEach(wire);
+
+/* Colors. */
+const swatches = all("[data-color]");
+for (const input of swatches) {
+  input.addEventListener("input", () => {
+    const hex = input.value;
+    const pairs = hex.slice(1).match(/../g) || ["00", "00", "00"];
+    const rgb = pairs.map(pair => parseInt(pair, 16));
+    const meta = input.parentElement.querySelector(".hex");
+    if (meta) meta.textContent = hex.toUpperCase();
+    send("col:" + input.dataset.color + ":" + rgb.join(","));
+  });
+}
+
+/* Key bind. */
+const keyNames = {
+  1: "LMB", 2: "RMB", 4: "MMB", 5: "Mouse 4", 6: "Mouse 5", 9: "Tab",
+  16: "Shift", 17: "Ctrl", 18: "Alt", 20: "Caps Lock", 32: "Space",
+  13: "Enter", 27: "Esc", 192: "`", 189: "-", 187: "="
+};
+let aimKey = 0x12, binding = false;
+
+function keyName(value) {
+  if (value >= 112 && value <= 123) return "F" + (value - 111);
+  if (value >= 48 && value <= 90) return String.fromCharCode(value);
+  return keyNames[value] || "VK " + value;
+}
+function paintKey() {
+  const button = $("bind");
+  button.textContent = binding ? "Press a key" : keyName(aimKey);
+  button.classList.toggle("arm", binding);
+}
+function chooseKey(key) {
+  aimKey = key;
+  binding = false;
+  paintKey();
+  send("set:aa_key:" + key);
+}
+$("bind").addEventListener("click", () => { binding = !binding; paintKey(); });
+
+window.addEventListener("keydown", event => {
+  if (!binding) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.key === "Escape") { binding = false; paintKey(); }
+  else if (event.keyCode) chooseKey(event.keyCode);
+}, true);
+
+window.addEventListener("mousedown", event => {
+  if (!binding) return;
+  const key = [1, 4, 2, 5, 6][event.button];
+  if (key) { event.preventDefault(); chooseKey(key); }
+}, true);
+
+/* Actions. */
+$("save").addEventListener("click", () => send("act:save"));
+$("load").addEventListener("click", () => send("act:load"));
+$("close").addEventListener("click", () => send("close:"));
+
+/* Drag/move. */
+const head = $("head");
+let drag = null;
+head.addEventListener("pointerdown", event => {
+  if (event.target.closest("button, input, select")) return;
+  drag = [event.screenX, event.screenY];
+  head.classList.add("dragging");
+  head.setPointerCapture(event.pointerId);
+});
+head.addEventListener("pointermove", event => {
+  if (!drag) return;
+  send("drag:" + [event.screenX, event.screenY,
+                  event.screenX - drag[0], event.screenY - drag[1]].join(","));
+});
+function endDrag() {
+  if (drag) send("dragend:");
+  drag = null;
+  head.classList.remove("dragging");
+}
+head.addEventListener("pointerup", endDrag);
+head.addEventListener("pointercancel", endDrag);
+
+/* Toast. */
+let toastTimer = 0;
+function toast(text) {
+  const box = $("toast");
+  box.textContent = text;
+  box.classList.add("up");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => box.classList.remove("up"), 2400);
+}
+
+/* State. */
+function applyState(config) {
+  for (const input of controls) {
+    const value = config[input.dataset.key];
+    if (value === undefined || value === null) continue;
+    if (input.type === "checkbox") input.checked = Boolean(value);
+    else input.value = value / Number(input.dataset.scale || 1);
+    if (input.type === "range") paintRange(input);
+  }
+  if (config.colors) {
+    for (const input of swatches) {
+      const rgb = config.colors[input.dataset.color];
+      if (!rgb) continue;
+      const hex = "#" + rgb.map(v => v.toString(16).padStart(2, "0")).join("");
+      input.value = hex;
+      const meta = input.parentElement.querySelector(".hex");
+      if (meta) meta.textContent = hex.toUpperCase();
+    }
+  }
+  if (typeof config.aa_key === "number") { aimKey = config.aa_key; paintKey(); }
+}
+
+function applyTelem(state) {
+  const lives = Boolean(state.pid);
+  const targets = Number(state.targets || 0);
+  const pill = $("pill");
+  pill.dataset.live = lives ? "1" : "0";
+  pill.querySelector("em").textContent = lives
+    ? (targets === 1 ? "1 player" : targets + " players")
+    : "No game";
+  $("fdot").dataset.live = lives ? "1" : "0";
+  $("game").textContent = lives ? "Attached to ROB RUN" : "Waiting for game";
+  $("los").textContent = ["Off", "Loading", "Ready"][state.los] || "Off";
+  $("los").dataset.bad = state.los === 1 ? "1" : "0";
+}
+
+bridge && bridge.addEventListener("message", event => {
+  const data = String(event.data || "");
+  const cut = data.indexOf(":");
+  const kind = cut < 0 ? data : data.slice(0, cut);
+  const payload = cut < 0 ? "" : data.slice(cut + 1);
+  if (kind === "toast") { toast(payload); return; }
+  if (kind === "state") {
+    try { applyState(JSON.parse(payload)); } catch (error) { toast("Bad state payload"); }
+    return;
+  }
+  if (kind === "telem") {
+    try { applyTelem(JSON.parse(payload)); } catch (error) { /* ignore malformed telemetry */ }
+  }
+});
+
+/* Escape closes the menu, unless a key capture is in progress. */
+window.addEventListener("keydown", event => {
+  if (binding || event.key !== "Escape") return;
+  send("close:");
+});
+
+paintKey();
+send("hello:");
+
+/* Deep link: menu.html#aim opens that page. Harmless in the overlay, useful
+   when the page is opened in a browser for layout work. */
+const linked = tabs.find(tab => "#" + tab.dataset.tab === location.hash);
+if (linked) {
+  activate(linked);
+  /* The browser also scrolls the fragment into view; undo it so the page
+     header is not clipped under the top edge. */
+  requestAnimationFrame(() => { $("pages").scrollTop = 0; });
+}
+window.addEventListener("hashchange", () => {
+  const target = tabs.find(tab => "#" + tab.dataset.tab === location.hash);
+  if (target) activate(target);
 });
 </script>
 </body>
