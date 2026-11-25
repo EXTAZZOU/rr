@@ -1,0 +1,262 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>logit</title>
+<style>
+/* Colle ici ton @font-face Space Grotesk si tu le gardes.
+   Les tailles ci-dessous sont calibrées pour la pile système. */
+
+:root{
+  --bg:#0b0b0d;--text:#efeff1;--muted:#8e8e98;--faint:#5c5c66;
+  --line:#ffffff0f;--line2:#ffffff1a;--lime:#C8F751;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:transparent;overflow:hidden}
+body{font:12.5px/1.45 'Inter','Segoe UI',system-ui,sans-serif;color:var(--text);
+  -webkit-font-smoothing:antialiased;user-select:none}
+
+#app{position:fixed;inset:0;display:flex;overflow:hidden;
+  background:var(--bg);border:1px solid var(--line2);border-radius:10px}
+
+/* ---------- sidebar ---------- */
+aside{width:184px;flex:none;display:flex;flex-direction:column;padding:14px 10px 10px;border-right:1px solid var(--line)}
+.wm{display:flex;align-items:center;gap:8px;padding:2px 4px 14px}
+.wm .m{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;
+  background:var(--lime);color:#000;font:800 13px/1 'Inter',sans-serif}
+.wm b{font:700 15px/1 'Inter',sans-serif;letter-spacing:-.04em}
+.wm small{margin-left:auto;font-size:9.5px;font-weight:600;color:var(--faint)}
+.search{display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;border-radius:8px;
+  background:#ffffff0a;color:var(--faint);font-size:11.5px;margin-bottom:12px}
+.search svg{width:12px;height:12px;opacity:.65;flex:none}
+nav{display:flex;flex-direction:column;gap:1px}
+nav a{display:flex;align-items:center;gap:10px;height:34px;padding:0 9px;border-radius:7px;
+  color:var(--muted);font-size:12px;font-weight:500;cursor:pointer;text-decoration:none;
+  transition:background .13s,color .13s}
+nav a svg{width:14px;height:14px;opacity:.75;flex:none}
+nav a:hover{background:#ffffff08;color:var(--text)}
+nav a[aria-current]{background:#ffffff0d;color:#fff}
+nav a[aria-current] svg{opacity:1;color:var(--lime)}
+.sess{margin-top:auto;padding-top:12px;border-top:1px solid var(--line)}
+.sess div{display:flex;justify-content:space-between;align-items:center;height:20px;
+  font-size:10.5px;color:var(--faint)}
+.sess div b{color:var(--muted);font-weight:600}
+.live{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-weight:600}
+.live u{width:5px;height:5px;border-radius:50%;background:var(--lime);text-decoration:none}
+
+/* ---------- main ---------- */
+main{flex:1;min-width:0;display:flex;flex-direction:column;padding:14px 0 0}
+.bar{display:flex;align-items:center;gap:10px;padding:0 18px 12px}
+.bar h1{margin:0;font:600 14px 'Inter',sans-serif;letter-spacing:-.02em}
+.bar h1 span{color:var(--faint);font-weight:400}
+.bar .sp{flex:1}
+.preset{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:7px;
+  background:#ffffff0a;color:var(--muted);font-size:11.5px;font-weight:500;border:0;cursor:pointer}
+.preset:hover{color:var(--text);background:#ffffff11}
+.ib{width:28px;height:28px;display:grid;place-items:center;border:0;border-radius:7px;
+  background:transparent;color:var(--muted);cursor:pointer}
+.ib:hover{background:#ffffff0a;color:var(--text)}
+
+.tabs{display:flex;padding:0 18px;border-bottom:1px solid var(--line2)}
+.tabs button{height:31px;padding:0 13px;border:0;background:transparent;color:var(--faint);
+  font:600 11.5px 'Inter',sans-serif;cursor:pointer}
+.tabs button:hover{color:var(--muted)}
+.tabs button[aria-selected="true"]{color:#fff}
+
+.thead{display:flex;justify-content:space-between;padding:9px 18px 7px;
+  font:600 9.5px 'Inter',sans-serif;letter-spacing:.11em;text-transform:uppercase;color:var(--faint)}
+.rows{flex:1;overflow-y:auto;padding:0 18px 16px}
+.rows::-webkit-scrollbar{width:7px}
+.rows::-webkit-scrollbar-thumb{background:#ffffff17;border-radius:4px}
+.cap{font:600 9.5px 'Inter',sans-serif;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--faint);padding:13px 0 6px}
+.cap:first-child{padding-top:4px}
+
+.r{display:flex;align-items:center;gap:11px;min-height:40px;padding:3px 0;
+  border-bottom:1px solid var(--line);cursor:pointer;color:var(--muted)}
+.r:hover{color:var(--text)}
+.r>span{flex:1;min-width:0;font-size:12.5px}
+.r small{display:block;font-size:11px;color:var(--faint)}
+.r input{position:absolute;opacity:0;width:0;height:0}
+.tg{order:-1;flex:none;width:34px;height:19px;border-radius:99px;background:#ffffff16;
+  position:relative;transition:background .15s}
+.tg::after{content:"";position:absolute;top:3px;left:3px;width:13px;height:13px;border-radius:50%;
+  background:#fff;transition:transform .17s}
+input:checked+.tg{background:var(--lime)}
+input:checked+.tg::after{transform:translateX(15px);background:#0b0b0d}
+.r:has(input:checked){color:var(--text)}
+.chev{width:20px;height:20px;flex:none;display:grid;place-items:center;color:var(--faint);border-radius:5px}
+.chev:hover{background:#ffffff0d;color:var(--text)}
+
+.sl{display:block;padding:8px 0 10px;border-bottom:1px solid var(--line)}
+.sl .h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;
+  font-size:12.5px;color:var(--muted)}
+.sl output{font-size:11.5px;font-weight:600;color:var(--text);font-variant-numeric:tabular-nums}
+input[type=range]{-webkit-appearance:none;width:100%;height:14px;background:transparent;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:3px;border-radius:99px;
+  background:linear-gradient(90deg,#d7d7dc 0,#d7d7dc var(--p,0%),#ffffff1a var(--p,0%))}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;
+  border-radius:50%;background:#fff;margin-top:-4.5px}
+
+.seg{display:grid;grid-template-columns:repeat(5,1fr);gap:3px;padding:6px 0 10px}
+.seg label{position:relative;display:grid;place-items:center;height:28px;border-radius:6px;
+  background:#ffffff0a;color:var(--faint);font-size:11px;cursor:pointer}
+.seg label:hover{color:var(--text);background:#ffffff11}
+.seg input{position:absolute;opacity:0;width:0;height:0}
+.seg label:has(input:checked){background:#ffffff1a;color:#fff}
+
+/* ---------- preview ---------- */
+.prev{width:200px;flex:none;padding:14px;display:flex;flex-direction:column;gap:9px;
+  border-left:1px solid var(--line)}
+.prev .cap{padding:0 0 0 1px}
+.stage{flex:1;border-radius:8px;overflow:hidden;position:relative;
+  border:1px solid var(--line);background:linear-gradient(#232833,#181b22 60%,#101218)}
+.stage::before{content:"";position:absolute;inset:auto 0 0 0;height:40%;
+  background:linear-gradient(#0c0e13,#14171d)}
+.stage svg{position:absolute;inset:0;width:100%;height:100%}
+.hb{fill:var(--lime)}
+.hn{font:700 9.5px 'Inter',sans-serif;letter-spacing:.08em;text-transform:uppercase;
+  fill:#0b0b0d;text-anchor:middle}
+.hd{font:600 9.5px 'Inter',sans-serif;letter-spacing:.05em;fill:var(--text);text-anchor:middle}
+.legend{display:flex;gap:10px;font-size:9.5px;font-weight:600;letter-spacing:.07em;
+  text-transform:uppercase;color:var(--faint)}
+.legend u{width:6px;height:6px;border-radius:99px;display:inline-block;margin-right:4px;
+  text-decoration:none}
+
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <aside>
+    <div class="wm"><span class="m">l</span><b>logit</b><small>2.4</small></div>
+    <div class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      Search...
+    </div>
+    <nav id="nav">
+      <a href="#" data-t="combat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 8l4-4 12 12-4 4z"/></svg>Combat</a>
+      <a href="#" data-t="overlay" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="16" r="3"/><path d="M8 11v5M16 13V8"/></svg>Overlay</a>
+      <a href="#" data-t="loot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 9l8-5 8 5v6l-8 5-8-5z"/></svg>Loot</a>
+      <a href="#" data-t="vehicles"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="7" width="18" height="10" rx="3"/><circle cx="8" cy="17" r="2"/><circle cx="16" cy="17" r="2"/></svg>Vehicles</a>
+    </nav>
+    <div class="sess">
+      <div><span>session</span><span class="live"><u></u>7 seen</span></div>
+      <div><span>target</span><b>ROB RUN</b></div>
+      <div><span>channel</span><b>PRIVATE</b></div>
+    </div>
+  </aside>
+
+  <main>
+    <div class="bar">
+      <h1>Players <span>/ overlay</span></h1>
+      <span class="sp"></span>
+      <button class="preset">Preset 01</button>
+      <button class="ib" aria-label="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" width="14" height="14"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
+      </button>
+    </div>
+
+    <div class="tabs" id="tabs">
+      <button aria-selected="true" data-p="actors">Actors</button>
+      <button aria-selected="false" data-p="markers">Markers</button>
+      <button aria-selected="false" data-p="ranges">Ranges</button>
+    </div>
+
+    <!-- ACTORS -->
+    <div class="thead" data-page="actors"><span>Type</span><span>Enable</span></div>
+    <div class="rows" data-page="actors">
+      <div class="cap">Draw</div>
+      <label class="r"><input type="checkbox" checked><i class="tg"></i><span>Hollow skeleton</span><i class="chev">⌄</i></label>
+      <label class="r"><input type="checkbox" checked><i class="tg"></i><span>Name plate</span><i class="chev">⌄</i></label>
+      <label class="r"><input type="checkbox" checked><i class="tg"></i><span>Distance</span><i class="chev">⌄</i></label>
+      <label class="r"><input type="checkbox"><i class="tg"></i><span>Leader line</span><i class="chev">⌄</i></label>
+
+      <div class="cap">State</div>
+      <label class="r"><input type="checkbox" checked><i class="tg"></i><span>Accent when occluded</span><i class="chev">⌄</i></label>
+      <label class="r"><input type="checkbox" checked><i class="tg"></i><span>Fade with distance</span><i class="chev">⌄</i></label>
+      <label class="r"><input type="checkbox"><i class="tg"></i><span>Hide own character</span><i class="chev">⌄</i></label>
+
+      <div class="cap">Tuning</div>
+      <label class="sl"><span class="h"><span>Line weight</span><output>1.0</output></span>
+        <input type="range" min="5" max="30" value="10" data-div="10" data-dec="1"></label>
+      <label class="sl"><span class="h"><span>Text scale</span><output>100 %</output></span>
+        <input type="range" min="60" max="160" value="100" data-suffix=" %"></label>
+    </div>
+
+    <!-- MARKERS -->
+    <div class="thead" data-page="markers" hidden><span>Element</span><span>Enable</span></div>
+    <div class="rows" data-page="markers" hidden>
+      <div class="cap">Groups</div>
+      <label class="r"><input type="checkbox" checked><i class="tg"></i><span>Criminals</span><i class="chev">⌄</i></label>
+      <label class="r"><input type="checkbox" checked><i class="tg"></i><span>Cops</span><i class="chev">⌄</i></label>
+      <label class="r"><input type="checkbox" checked><i class="tg"></i><span>Civilians / settlers</span><i class="chev">⌄</i></label>
+      <label class="r"><input type="checkbox" checked><i class="tg"></i><span>Clan / party</span><i class="chev">⌄</i></label>
+      <div class="cap">Extras</div>
+      <label class="r"><input type="checkbox"><i class="tg"></i><span>Armour indicator</span><i class="chev">⌄</i></label>
+      <label class="r"><input type="checkbox"><i class="tg"></i><span>Held weapon</span><i class="chev">⌄</i></label>
+      <label class="r"><input type="checkbox"><i class="tg"></i><span>Off-screen arrows</span><i class="chev">⌄</i></label>
+    </div>
+
+    <!-- RANGES -->
+    <div class="thead" data-page="ranges" hidden><span>Range</span><span>Metres</span></div>
+    <div class="rows" data-page="ranges" hidden>
+      <div class="cap">Distances</div>
+      <label class="sl"><span class="h"><span>Marker range</span><output>300 m</output></span>
+        <input type="range" min="0" max="2000" step="10" value="300" data-suffix=" m"></label>
+      <label class="sl"><span class="h"><span>Skeleton range</span><output>150 m</output></span>
+        <input type="range" min="0" max="2000" step="10" value="150" data-suffix=" m"></label>
+      <label class="sl"><span class="h"><span>Fade start</span><output>120 m</output></span>
+        <input type="range" min="0" max="500" step="10" value="120" data-suffix=" m"></label>
+      <div class="cap">Density</div>
+      <label class="sl"><span class="h"><span>Max on screen</span><output>64</output></span>
+        <input type="range" min="8" max="256" step="8" value="64"></label>
+    </div>
+  </main>
+
+  <div class="prev">
+    <div class="cap">Preview</div>
+    <div class="stage">
+      <svg viewBox="0 0 172 320" preserveAspectRatio="xMidYMid slice">
+        <rect class="hb" x="58" y="8" width="56" height="14" rx="4"/>
+        <text class="hn" x="86" y="18">Unknown</text>
+        <path d="M86 23v12" stroke="#C8F751" stroke-width="1"/>
+        <g stroke="#fff" stroke-width="1.15" fill="none" stroke-linecap="round">
+          <circle cx="86" cy="43" r="8"/>
+          <path d="M86 52v30M86 61l-16 9M86 61l16 9M86 82l-12 22M86 82l12 22M86 52l-12 24-3 25M86 52l12 24 3 25"/>
+          <path d="M70 70l-8 16M102 70l8 16"/>
+        </g>
+        <g fill="#C8F751">
+          <rect x="74" y="252" width="6" height="2.5" rx="1"/>
+          <rect x="82" y="252" width="6" height="2.5" rx="1"/>
+          <rect x="90" y="252" width="6" height="2.5" rx="1"/>
+          <rect x="98" y="252" width="3" height="2.5" rx="1" opacity=".4"/>
+        </g>
+        <text class="hd" x="86" y="273">24 m</text>
+      </svg>
+    </div>
+    <div class="legend"><span><u style="background:#C8F751"></u>Occluded</span><span><u style="background:#fff"></u>Visible</span></div>
+  </div>
+</div>
+
+<script>
+const tabs=[...document.querySelectorAll('#tabs button')];
+const pages=[...document.querySelectorAll('[data-page]')];
+tabs.forEach(b=>b.onclick=()=>{
+  tabs.forEach(x=>x.setAttribute('aria-selected',x===b));
+  pages.forEach(p=>p.hidden=p.dataset.page!==b.dataset.p);
+});
+
+document.querySelectorAll('input[type=range]').forEach(r=>{
+  const out=r.closest('.sl').querySelector('output');
+  const paint=()=>{
+    r.style.setProperty('--p',((r.value-r.min)/(r.max-r.min)*100)+'%');
+    if(out) out.textContent=(r.value/(r.dataset.div||1)).toFixed(r.dataset.dec||0)+(r.dataset.suffix||'');
+  };
+  r.oninput=paint;paint();
+});
+</script>
+</body>
+</html>

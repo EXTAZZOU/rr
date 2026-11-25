@@ -1,0 +1,10 @@
+/* aio_launcher.rc - embedded payloads for ANTI-TCHOY.exe.
+ * The mono-exe bundles the mapper, driver, overlay (release build with
+ * auth enforced) and WebView2 loader. Paths are relative to this file.
+ */
+#include "aio_resources.h"
+
+AIO_RCDATA_KD2      RCDATA "..\\1_run\\kd2.exe"
+AIO_RCDATA_DRIVER   RCDATA "..\\1_run\\kernel-mode.sys"
+AIO_RCDATA_OVERLAY  RCDATA "Logit.exe"
+AIO_RCDATA_WEBVIEW2 RCDATA "..\\1_run\\WebView2Loader.dll"
