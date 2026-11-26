@@ -483,8 +483,8 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
             if (!b->cham_on || !p->cham_valid) continue;
             if (!rr_relationship_allowed(p->relationships, b->show_clan, b->show_police)) continue;
             if (!player_class_allowed(p, b)) continue;
-            /* Le cham est le remplissage du model : affiché uniquement si model_fill >= 2. */
-            if (b->model_fill < 2) continue;
+            /* Le cham est le remplissage du model : affiché dès que model_fill >= 1 (Flat ou Textured). */
+            if (b->model_fill < 1) continue;
             float fx,fy,hx,hy;
             if (!game_w2s(cam,&p->pos,vw,vh,&fx,&fy) && !game_w2s(cam,&p->head,vw,vh,&hx,&hy)) continue;
             if (mesh_highlight(p,cam,vw,vh, elem_col(b, 16, 0, p->dead))) {
@@ -579,10 +579,11 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
         RGBA col = elem_col(b, 1, _los_blocked, p->dead);
 
         if (b->show_box) {
-            /* Remplissage de boîte : slot 15, seulement si box_fill >= 2 (Health drain/tint). */
-            if (b->box_fill >= 2) {
+            /* Remplissage de boîte : slot 15, dès que box_fill >= 1 (Color/Health drain/Health tint). */
+            if (b->box_fill >= 1) {
                 RGBA fill_col = elem_col(b, 15, _los_blocked, p->dead);
-                fill_col = (fill_col & 0x00FFFFFFu) | (60u << 24);
+                unsigned fa = ((fill_col >> 24) * 60u) / 255u;
+                fill_col = (fill_col & 0x00FFFFFFu) | (fa << 24);
                 r_fill(bx, by, bw, bh, fill_col);
             }
             corner_box(bx, by, bw, bh, col, line_w);
@@ -641,7 +642,8 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
                 float th = 16.0f;
                 float cyb = by - 34.0f;
                 RGBA bg = elem_col(b, 6, _los_blocked, p->dead);
-                bg = (bg & 0x00FFFFFFu) | (170u << 24);
+                unsigned ba = ((bg >> 24) * 170u) / 255u;
+                bg = (bg & 0x00FFFFFFu) | (ba << 24);
                 r_fill_ellipse(fx, cyb, tw * 0.5f, th * 0.5f, bg);
                 r_text(fx, cyb - 7.0f, rt, RRGB(10, 12, 16), RT_CENTER);
             }

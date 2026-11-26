@@ -100,7 +100,7 @@ extern "C" {
     X(show_robbers, 1, 0, 1) \
     X(show_civilians, 1, 0, 1) \
     X(box_fill, 0, 0, 3) \
-    X(model_fill, 0, 0, 2)
+    X(model_fill, 1, 0, 2)
 
 typedef struct BR_Config {
     unsigned int magic, version;

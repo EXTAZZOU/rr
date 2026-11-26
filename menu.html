@@ -516,7 +516,7 @@ const newProfile = (v, w) => ({
   on: {}, top: ["name"], bottom: ["weapon", "dist", "hptext", "crouch"], side: { health: "left", armor: "right" },
   c: {
     box: { shape: "Full", fill: "None", grad: false, color: { v: "#FFFFFF", w }, fillColor: { v, w } },
-    model: { outline: "Off", width: 2, color: { v, w }, fill: "None", fillColor: { v, w } },
+    model: { outline: "Off", width: 2, color: { v, w }, fill: "Flat", fillColor: { v, w } },
     skel: { width: 1, color: { v: "#FFFFFF", w } }, aim: { shape: "Dot", color: { v: "#FF4040", w: "#FF4040" } },
     name: { size: "Medium", color: { v: "#FFFFFF", w } }, weapon: { size: "Small", color: { v: "#FFFFFF", w } }, dist: { size: "Small", color: { v: "#FFFFFF", w } },
     hptext: { size: "Small", color: { v: "#7CFC3A", w: "#7CFC3A" } }, crouch: { size: "Small", color: { v: "#FFD166", w: "#FFD166" } },
@@ -898,6 +898,7 @@ app.addEventListener("click", event => {
     const p = editing(), name = hit.dataset.chip;
     p.on[name] = !p.on[name];
     if (CHIP_KEY[name]) send("set:" + CHIP_KEY[name] + ":" + (p.on[name] ? 1 : 0));
+    if (name === "model") send("set:model_fill:" + Math.max(0, MODEL_FILL.indexOf(p.c.model.fill)));
     return renderPreview();
   }
   if (has("#btEl")) { S.sheet = !S.sheet; S.pop = S.pick = null; return renderPreview(); }
@@ -1092,6 +1093,11 @@ function applyState(config) {
   if (prof) for (const chipName of Object.keys(CHIP_KEY)) {
     const backendKey = CHIP_KEY[chipName];
     if (backendKey in config) prof.on[chipName] = !!config[backendKey];
+  }
+  /* Modes de remplissage : box.fill et model.fill viennent d'entiers backend. */
+  if (prof) {
+    if ("box_fill"   in config) prof.c.box.fill   = FILL[config.box_fill] || FILL[0];
+    if ("model_fill" in config) prof.c.model.fill = MODEL_FILL[config.model_fill] || MODEL_FILL[0];
   }
   /* Tiers loot. */
   for (const label of Object.keys(LOOT_TIER)) {
