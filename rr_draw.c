@@ -644,7 +644,10 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
             else if (strstr(p->role, "hubber")) rt = "CIVILIAN";
             else if (!strstr(p->role, "citizen")) rt = 0;
             if (rt) {
-                /* Badge de rôle : bg semi-transparent avec la couleur du name (slot 6). */
+                /* Badge de rôle : bg semi-transparent avec la couleur du name (slot 6).
+                 * Partage voulu, pas un reste de refactor : ce bloc est conditionné par
+                 * show_name (L637), donc badge et label apparaissent sous le même toggle ;
+                 * la paire visuelle exige la même palette. Pas de slot dédié "role badge". */
                 gpu_font(13.0f);
                 float tw = r_text_width(rt) + 12.0f;
                 float th = 16.0f;
