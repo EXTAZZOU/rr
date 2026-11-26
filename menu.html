@@ -498,8 +498,9 @@ const EL = {
   hptext: { label: "Health text", group: "Labels and bars", text: 1 }, crouch: { label: "Crouch", group: "Labels and bars", text: 1 },
 };
 const FORM = {   // réglages de chaque élément : [libellé, type, propriété, options, désactivé si…]
-  model: [["Outline", "select", "outline", ["Off", "Line", "Glow"]], ["Width", "slider", "width", [1, 6], c => c.outline === "Off"], ["Color", "color", "color", 0, c => c.outline === "Off"],
-          ["Fill", "select", "fill", ["None", "Flat", "Textured"]], ["Fill color", "color", "fillColor", 0, c => c.fill === "None"]],
+  /* Outline / Width / Color retirés : slot 3 reste réservé côté backend mais aucun
+   * site de rendu ne le lit, les widgets associés étaient menteurs. */
+  model: [["Fill", "select", "fill", ["None", "Flat", "Textured"]], ["Fill color", "color", "fillColor", 0, c => c.fill === "None"]],
   box:   [["Shape", "select", "shape", ["Full", "Corners", "Dot", "3D"]], ["Fill", "select", "fill", ["None", "Color", "Health drain", "Health tint"]],
           ["Fill color", "color", "fillColor", 0, c => c.fill === "None" || c.fill.startsWith("Health")], ["Gradient", "toggle", "grad", 0, c => c.fill === "None"], ["Color", "color", "color"]],
   skel:  [["Width", "slider", "width", [1, 4]], ["Color", "color", "color"]],
