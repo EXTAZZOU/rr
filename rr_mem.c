@@ -53,11 +53,43 @@ void rr_set_backend(int backend) {
 }
 int rr_backend_active(void) { return g_backend_active; }
 
+/* ---- rpm_diag : one-line entries in rpm_diag.log beside the overlay exe --- */
+static void rpm_diag(const char* fmt, ...) {
+    wchar_t exepath[MAX_PATH * 2], exedir[MAX_PATH * 2];
+    GetModuleFileNameW(NULL, exepath, (DWORD)_countof(exepath));
+    wcsncpy_s(exedir, _countof(exedir), exepath, _TRUNCATE);
+    wchar_t* s = wcsrchr(exedir, L'\\');
+    if (s) *s = 0;
+    wchar_t path[MAX_PATH * 2];
+    _snwprintf_s(path, _countof(path), _TRUNCATE, L"%s\\rpm_diag.log", exedir);
+    FILE* f = _wfopen(path, L"a");
+    if (!f) return;
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    fprintf(f, "[%02u:%02u:%02u.%03u] ",
+            st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fputc('\n', f);
+    fclose(f);
+}
+
+/* Fire exactly once per (pid, event) so a tight polling loop doesn't flood
+ * the log. Resets when the pid changes. */
+static int g_rpm_logged_open     = 0;
+static int g_rpm_logged_openfail = 0;
+static int g_rpm_logged_peb      = 0;
+static int g_rpm_logged_readfail = 0;
+
 /* Lazy OpenProcess for the current pid. Reopens if the pid changed. */
 static HANDLE rpm_handle(void) {
     if (g_rr_pid != g_rpm_pid_cached) {
         if (g_rpm_handle) { CloseHandle(g_rpm_handle); g_rpm_handle = NULL; }
         g_rpm_pid_cached = g_rr_pid;
+        g_rpm_logged_open = g_rpm_logged_openfail = 0;
+        g_rpm_logged_peb = g_rpm_logged_readfail = 0;
     }
     if (!g_rpm_handle && g_rr_pid) {
         /* VM_READ for ReadProcessMemory, VM_WRITE for WriteProcessMemory,
@@ -67,6 +99,32 @@ static HANDLE rpm_handle(void) {
             PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION
             | PROCESS_QUERY_LIMITED_INFORMATION,
             FALSE, g_rr_pid);
+        if (!g_rpm_handle && !g_rpm_logged_openfail) {
+            DWORD e = GetLastError();
+            rpm_diag("OpenProcess(pid=%u, VM_READ|VM_WRITE|VM_OPERATION|QUERY_LIMITED_INFO) "
+                     "FAILED err=0x%08lX (%lu)", g_rr_pid, e, e);
+            /* Retry with the smallest useful rights set. If this works but the
+             * full set didn't, the anti-cheat is filtering by requested access. */
+            HANDLE h2 = OpenProcess(PROCESS_VM_READ
+                                    | PROCESS_QUERY_LIMITED_INFORMATION,
+                                    FALSE, g_rr_pid);
+            if (h2) {
+                rpm_diag("OpenProcess(pid=%u, VM_READ|QUERY_LIMITED_INFO) "
+                         "SUCCEEDED -- continuing READ-ONLY", g_rr_pid);
+                g_rpm_handle = h2;
+            } else {
+                DWORD e2 = GetLastError();
+                rpm_diag("OpenProcess(pid=%u, VM_READ|QUERY_LIMITED_INFO) "
+                         "ALSO FAILED err=0x%08lX (%lu) -- target is protected "
+                         "(Hyperion/Byfron/EAC/other); RPM backend is blocked",
+                         g_rr_pid, e2, e2);
+            }
+            g_rpm_logged_openfail = 1;
+        } else if (g_rpm_handle && !g_rpm_logged_open) {
+            rpm_diag("OpenProcess(pid=%u) ok handle=0x%p", g_rr_pid,
+                     g_rpm_handle);
+            g_rpm_logged_open = 1;
+        }
     }
     return g_rpm_handle;
 }
@@ -550,6 +608,13 @@ int rr_read(uint64_t addr, void* out, size_t n) {
         g_calls++;
         g_bytes += (long)n;
         if (ok && got == n) { g_ok = 1; return 1; }
+        if (!g_rpm_logged_readfail) {
+            DWORD e = GetLastError();
+            rpm_diag("ReadProcessMemory FIRST FAIL addr=0x%llX size=%zu "
+                     "got=%zu ok=%d err=0x%08lX (%lu)",
+                     (unsigned long long)addr, n, (size_t)got, ok, e, e);
+            g_rpm_logged_readfail = 1;
+        }
         return 0;
     }
     if (!g_dev || !g_pdioc) return 0;
@@ -698,15 +763,38 @@ typedef NTSTATUS (WINAPI* PFN_NTQIP)(HANDLE, ULONG, PVOID, ULONG, PULONG);
 
 static uint64_t rpm_peb_lookup(void) {
     HANDLE h = rpm_handle();
-    if (!h) return 0;
+    if (!h) {
+        if (!g_rpm_logged_peb) {
+            rpm_diag("rr_peb : rpm_handle() returned NULL, PEB unreachable");
+            g_rpm_logged_peb = 1;
+        }
+        return 0;
+    }
     HMODULE nd = GetModuleHandleW(L"ntdll.dll");
     PFN_NTQIP p = nd ? (PFN_NTQIP)GetProcAddress(nd, "NtQueryInformationProcess")
                     : NULL;
-    if (!p) return 0;
+    if (!p) {
+        if (!g_rpm_logged_peb) {
+            rpm_diag("rr_peb : NtQueryInformationProcess unresolvable");
+            g_rpm_logged_peb = 1;
+        }
+        return 0;
+    }
     RR_PBI pbi;
     ZeroMemory(&pbi, sizeof(pbi));
     ULONG ret = 0;
     NTSTATUS st = p(h, 0 /* ProcessBasicInformation */, &pbi, sizeof(pbi), &ret);
+    if (!g_rpm_logged_peb) {
+        if (st < 0)
+            rpm_diag("rr_peb : NtQueryInformationProcess FAILED st=0x%08lX",
+                     (unsigned long)st);
+        else if (!pbi.PebBaseAddress)
+            rpm_diag("rr_peb : NtQueryInformationProcess ok but PebBaseAddress=0");
+        else
+            rpm_diag("rr_peb : PebBaseAddress=0x%llX (NtQIP ok)",
+                     (unsigned long long)(uintptr_t)pbi.PebBaseAddress);
+        g_rpm_logged_peb = 1;
+    }
     if (st < 0 || !pbi.PebBaseAddress) return 0;
     return (uint64_t)(uintptr_t)pbi.PebBaseAddress;
 }
