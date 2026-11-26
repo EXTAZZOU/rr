@@ -102,11 +102,22 @@ int rr_los_check(RR_V3 start,RR_V3 end) {
     int result=RR_LOS_UNKNOWN;
     AcquireSRWLockShared(&g_lock);
     DWORD now=GetTickCount();uint64_t world=game_world_addr();
-    if(world && world==g_world_id && g_static && g_runtime && now-g_static_time<5000 && now-g_runtime_time<600) {
-        int a=rr_los_static_trace(&g_static->geometry,start,end);
-        int b=a==RR_LOS_BLOCKED ? RR_LOS_BLOCKED : rr_los_runtime_trace(g_runtime,start,end);
-        if(b==RR_LOS_BLOCKED)result=RR_LOS_BLOCKED;
-        else if(a==RR_LOS_CLEAR && b==RR_LOS_CLEAR)result=RR_LOS_CLEAR;
+    int world_ok = world && world==g_world_id;
+    int static_fresh  = world_ok && g_static  && now-g_static_time  < 5000;
+    int runtime_fresh = world_ok && g_runtime && now-g_runtime_time <  600;
+    /* Static-only fallback pendant la fenêtre morte du runtime : au respawn de map
+     * ou sur un hiccup worker, g_runtime_time dépasse 600 ms et l'ancien code rendait
+     * UNKNOWN sur TOUT le monde, coupant l'aim et le voile de draw. On se replie sur
+     * le static seul (géométrie fixe, refresh toutes les 3 s) : les obstructions
+     * dynamiques (joueurs, véhicules mobiles) ne comptent plus dans cet intervalle,
+     * mais les murs restent respectés. Trou dynamique borné à ~600 ms en régime normal. */
+    if (static_fresh) {
+        int a = rr_los_static_trace(&g_static->geometry, start, end);
+        int b = a;  /* défaut : pas de runtime, le static décide seul */
+        if (a != RR_LOS_BLOCKED && runtime_fresh)
+            b = rr_los_runtime_trace(g_runtime, start, end);
+        if (b == RR_LOS_BLOCKED) result = RR_LOS_BLOCKED;
+        else if (a == RR_LOS_CLEAR && b == RR_LOS_CLEAR) result = RR_LOS_CLEAR;
     }
     ReleaseSRWLockShared(&g_lock);return result;
 }
