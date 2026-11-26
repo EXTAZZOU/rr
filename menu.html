@@ -1119,13 +1119,15 @@ function applyState(config) {
    * (color[] visible, color_occluded[] derrière mur) mais applyState les ignorait :
    * l'UI repartait des défauts de newProfile et le prochain pick émettait une valeur
    * dérivée d'une base fausse. v ↔ color[], w ↔ color_occluded[]. */
-  const rgbHex = (a) => "#" + a.map((n) => (n & 255).toString(16).padStart(2, "0")).join("");
+  /* Majuscules alignees sur rgb2hex et newProfile : les comparaisons === sur une
+   * couleur echoueraient silencieusement si un cote etait en minuscules. */
+  const rgbHex = (a) => "#" + a.map((n) => (n & 255).toString(16).padStart(2, "0")).join("").toUpperCase();
   if (config.colors && config.colors_occluded) {
     for (const srcKey of Object.keys(T)) {
       const q = T[srcKey].profile;
       if (!q || !q.c) continue;
       const vw = VIEWS[T[srcKey].view];
-      const els = vw ? vw.els : null;   /* null = pas de restriction */
+      const els = vw && vw.els ? vw.els : [];   /* vue inconnue ou sans els → aucune chip, pas d'injection */
       for (const slotStr of Object.keys(config.colors)) {
         const path = SLOT_PATH[+slotStr];
         if (!path) continue;
