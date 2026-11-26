@@ -837,6 +837,60 @@ typedef struct _RR_PBI {
 } RR_PBI;
 typedef NTSTATUS (WINAPI* PFN_NTQIP)(HANDLE, ULONG, PVOID, ULONG, PULONG);
 
+/* Probe several offsets inside the PEB to show the exact scope of the kernel
+ * protection : if ReadProcessMemory refuses all offsets, the whole PEB page is
+ * locked ; if it refuses only some, the protector filters by region/field.
+ * This runs once, right after the PEB base is obtained. */
+static void rpm_probe_peb(HANDLE h, uint64_t peb) {
+    /* MEMORY_BASIC_INFORMATION on the PEB page : State, Protect and AllocationProtect
+     * show the kernel-side protection when VirtualQueryEx can see them. A page
+     * that reads as PAGE_NOACCESS or carries PAGE_GUARD explains the deny. */
+    MEMORY_BASIC_INFORMATION mbi;
+    ZeroMemory(&mbi, sizeof(mbi));
+    SIZE_T mq = VirtualQueryEx(h, (LPCVOID)(uintptr_t)peb, &mbi, sizeof(mbi));
+    if (mq == sizeof(mbi)) {
+        rpm_diag("PEB page probe : VirtualQueryEx base=0x%llX size=0x%llX "
+                 "state=0x%lX protect=0x%lX allocprotect=0x%lX type=0x%lX",
+                 (unsigned long long)(uintptr_t)mbi.BaseAddress,
+                 (unsigned long long)mbi.RegionSize,
+                 (unsigned long)mbi.State, (unsigned long)mbi.Protect,
+                 (unsigned long)mbi.AllocationProtect,
+                 (unsigned long)mbi.Type);
+    } else {
+        rpm_diag("PEB page probe : VirtualQueryEx FAILED err=0x%08lX "
+                 "(cannot even query page metadata)",
+                 GetLastError());
+    }
+
+    /* Spot-read standard PEB fields. On x64 : +0x02 BeingDebugged,
+     * +0x10 ImageBaseAddress, +0x18 Ldr, +0x20 ProcessParameters. */
+    static const struct { ULONG off; const char* name; ULONG size; } fields[] = {
+        { 0x02, "BeingDebugged",     1 },
+        { 0x10, "ImageBaseAddress",  8 },
+        { 0x18, "Ldr",               8 },
+        { 0x20, "ProcessParameters", 8 },
+        { 0x30, "SubSystemData",     8 },
+        { 0x58, "KernelCallbackTable", 8 },
+    };
+    for (int i = 0; i < (int)(sizeof(fields)/sizeof(fields[0])); i++) {
+        char buf[8] = {0};
+        SIZE_T got = 0;
+        BOOL ok = ReadProcessMemory(h,
+                                    (LPCVOID)(uintptr_t)(peb + fields[i].off),
+                                    buf, fields[i].size, &got);
+        DWORD e = ok ? 0 : GetLastError();
+        if (ok && got == fields[i].size) {
+            uint64_t v = 0;
+            memcpy(&v, buf, fields[i].size);
+            rpm_diag("  PEB+0x%02X %-20s : 0x%llX (read ok)",
+                     fields[i].off, fields[i].name, (unsigned long long)v);
+        } else {
+            rpm_diag("  PEB+0x%02X %-20s : READ FAILED err=0x%08lX got=%zu",
+                     fields[i].off, fields[i].name, e, (size_t)got);
+        }
+    }
+}
+
 static uint64_t rpm_peb_lookup(void) {
     HANDLE h = rpm_handle();
     if (!h) {
@@ -866,13 +920,91 @@ static uint64_t rpm_peb_lookup(void) {
                      (unsigned long)st);
         else if (!pbi.PebBaseAddress)
             rpm_diag("rr_peb : NtQueryInformationProcess ok but PebBaseAddress=0");
-        else
+        else {
             rpm_diag("rr_peb : PebBaseAddress=0x%llX (NtQIP ok)",
                      (unsigned long long)(uintptr_t)pbi.PebBaseAddress);
+            rpm_probe_peb(h, (uint64_t)(uintptr_t)pbi.PebBaseAddress);
+        }
         g_rpm_logged_peb = 1;
     }
     if (st < 0 || !pbi.PebBaseAddress) return 0;
     return (uint64_t)(uintptr_t)pbi.PebBaseAddress;
+}
+
+/* Fallback module enumeration via Psapi.EnumProcessModulesEx. The PEB walk is
+ * blocked when the target protector locks the PEB page (Byfron, EAC, Vanguard).
+ * Psapi queries the kernel through a different code path and sometimes bypasses
+ * the protection ; we use it as a fallback when the PEB walk returns nothing. */
+typedef BOOL (WINAPI* PFN_ENUMPROCMODEX)(HANDLE, HMODULE*, DWORD, LPDWORD, DWORD);
+typedef DWORD (WINAPI* PFN_GETMODBASENAME)(HANDLE, HMODULE, LPWSTR, DWORD);
+typedef BOOL (WINAPI* PFN_GETMODINFO)(HANDLE, HMODULE, void*, DWORD);
+
+typedef struct { void* lpBaseOfDll; DWORD SizeOfImage; void* EntryPoint; } RR_MODINFO;
+
+static int rr_module_psapi(const char* name, uint64_t* base, uint32_t* size) {
+    HANDLE h = rpm_handle();
+    if (!h) return 0;
+    HMODULE psapi = LoadLibraryW(L"psapi.dll");
+    if (!psapi) return 0;
+    PFN_ENUMPROCMODEX  pEnum = (PFN_ENUMPROCMODEX) GetProcAddress(psapi, "EnumProcessModulesEx");
+    PFN_GETMODBASENAME pName = (PFN_GETMODBASENAME)GetProcAddress(psapi, "GetModuleBaseNameW");
+    PFN_GETMODINFO     pInfo = (PFN_GETMODINFO)    GetProcAddress(psapi, "GetModuleInformation");
+    if (!pEnum || !pName || !pInfo) { FreeLibrary(psapi); return 0; }
+
+    HMODULE mods[1024];
+    DWORD needed = 0;
+    /* LIST_MODULES_ALL = 0x03 covers both 32- and 64-bit entries. */
+    if (!pEnum(h, mods, sizeof(mods), &needed, 0x03)) {
+        DWORD e = GetLastError();
+        if (use_rpm() && !g_rpm_logged_modules)
+            rpm_diag("rr_module_psapi : EnumProcessModulesEx FAILED err=0x%08lX",
+                     e);
+        FreeLibrary(psapi);
+        return 0;
+    }
+    int count = (int)(needed / sizeof(HMODULE));
+    if (count > (int)(sizeof(mods)/sizeof(mods[0])))
+        count = (int)(sizeof(mods)/sizeof(mods[0]));
+
+    wchar_t want[64];
+    MultiByteToWideChar(CP_ACP, 0, name, -1, want, 64);
+
+    char enumerated[16][80];
+    int enum_count = 0;
+    int hit = 0;
+
+    for (int i = 0; i < count; i++) {
+        wchar_t nm[256] = {0};
+        DWORD got = pName(h, mods[i], nm, (DWORD)_countof(nm));
+        if (!got) continue;
+        if (enum_count < 16)
+            WideCharToMultiByte(CP_UTF8, 0, nm, -1,
+                                enumerated[enum_count++], 80, NULL, NULL);
+        if (_wcsicmp(nm, want) == 0) {
+            RR_MODINFO mi;
+            ZeroMemory(&mi, sizeof(mi));
+            if (pInfo(h, mods[i], &mi, sizeof(mi))) {
+                *base = (uint64_t)(uintptr_t)mi.lpBaseOfDll;
+                if (size) *size = mi.SizeOfImage;
+                hit = 1;
+                if (use_rpm() && !g_rpm_logged_modules)
+                    rpm_diag("rr_module_psapi : found \"%s\" base=0x%llX size=0x%X "
+                             "(PEB walk was blocked ; psapi succeeded)",
+                             name, (unsigned long long)*base, (unsigned)mi.SizeOfImage);
+                break;
+            }
+        }
+    }
+
+    if (!hit && use_rpm() && !g_rpm_logged_modules) {
+        rpm_diag("rr_module_psapi : NOT FOUND via psapi, total modules=%d enumerated=%d",
+                 count, enum_count);
+        for (int i = 0; i < enum_count; i++)
+            rpm_diag("  psapi mod[%02d] = \"%s\"", i, enumerated[i]);
+    }
+
+    FreeLibrary(psapi);
+    return hit;
 }
 
 uint64_t rr_image_base(void) {
@@ -910,21 +1042,42 @@ int rr_module(const char* name, uint64_t* base, uint32_t* size) {
     if (size) *size = 0;
     uint64_t peb = rr_peb();
     if (!peb) {
-        if (use_rpm() && !g_rpm_logged_modules) {
-            rpm_diag("rr_module(\"%s\") : rr_peb()=0, PEB walk cannot start", name);
-            g_rpm_logged_modules = 1;
+        if (use_rpm()) {
+            /* PEB unreachable : psapi fallback is the only option. */
+            if (rr_module_psapi(name, base, size)) {
+                g_rpm_logged_modules = 1;
+                return 1;
+            }
+            if (!g_rpm_logged_modules) {
+                rpm_diag("rr_module(\"%s\") : rr_peb()=0 and psapi fallback also "
+                         "failed -- module lookup impossible in RPM", name);
+                g_rpm_logged_modules = 1;
+            }
         }
         return 0;
     }
 
     uint64_t ldr = rr_u64(peb + 0x18);
     if (!PL(ldr)) {
-        if (use_rpm() && !g_rpm_logged_modules) {
-            rpm_diag("rr_module(\"%s\") : PEB=0x%llX but LDR at +0x18 is 0x%llX "
-                     "(not a plausible address) -- RPM reads PEB header but the "
-                     "pointer is 0 or in no-man's-land", name,
-                     (unsigned long long)peb, (unsigned long long)ldr);
-            g_rpm_logged_modules = 1;
+        if (use_rpm()) {
+            /* PEB readable but Ldr blocked : Byfron-style protection. Try
+             * psapi, which goes through a different kernel path. */
+            if (rr_module_psapi(name, base, size)) {
+                if (!g_rpm_logged_modules) {
+                    rpm_diag("rr_module(\"%s\") : PEB=0x%llX LDR+0x18=0x%llX refused, "
+                             "psapi fallback SUCCEEDED -- continuing with psapi-resolved base",
+                             name, (unsigned long long)peb, (unsigned long long)ldr);
+                    g_rpm_logged_modules = 1;
+                }
+                return 1;
+            }
+            if (!g_rpm_logged_modules) {
+                rpm_diag("rr_module(\"%s\") : PEB=0x%llX but LDR at +0x18 is 0x%llX "
+                         "(not plausible) AND psapi fallback failed -- both "
+                         "module-lookup paths blocked", name,
+                         (unsigned long long)peb, (unsigned long long)ldr);
+                g_rpm_logged_modules = 1;
+            }
         }
         return 0;
     }
