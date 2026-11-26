@@ -427,7 +427,10 @@ const LOOT_TIER = {
    NOTE : show_robbers et show_civilians sont à ajouter dans BR_SETTINGS (menu_bridge.h) ;
    br_config_set ignorera silencieusement les clés inconnues en attendant. */
 const SRC_KEY = { criminals: "show_robbers", cops: "show_police", clan: "show_clan", civilians: "show_civilians" };
-/* 0 réservé, 13 libre, 15 et 16 pour les remplissages. */
+/* 0 réservé, 13 libre, 15 et 16 pour les remplissages.
+ * model: 3 reste réservé après cd4e074 (widgets Outline/Width/Color retirés
+ * du FORM.model) ; aucun site de rendu C ne le lit encore — ne pas supprimer
+ * sans concertation, la réservation disparaîtrait sans trace. */
 const COLOR_INDEX = {
   el:    { box: 1, skel: 2, model: 3, health: 4, name: 6, weapon: 7, dist: 8, armor: 9, hptext: 11, crouch: 12, aim: 14, boxFill: 15, modelFill: 16 },
   state: { downed: 5, targeted: 10 },
@@ -706,7 +709,7 @@ function halfHTML(side) {
   const col = (el, prop = "color") => (!EL[el].bar && re) || p.c[el][prop][side];
   const m = p.c.model;
   let f = side === "w" ? "brightness(.6) saturate(.55) " : "";
-  if (on("model") && m.outline !== "Off") {
+  if (on("model") && (m.outline === "Line" || m.outline === "Glow")) {
     const c = col("model"), o = m.width / 2;
     f += `drop-shadow(${o}px 0 0 ${c}) drop-shadow(-${o}px 0 0 ${c}) drop-shadow(0 ${o}px 0 ${c}) drop-shadow(0 -${o}px 0 ${c})` + (m.outline === "Glow" ? ` drop-shadow(0 0 7px ${c})` : "");
   }
