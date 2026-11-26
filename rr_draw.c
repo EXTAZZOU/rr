@@ -387,7 +387,7 @@ static const RR_VEHICLE_MESH* vehicle_mesh(const RR_PLAYER* p) {
     return NULL;
 }
 
-static void draw_vehicle_cham(const RR_PLAYER* p, const RR_CAMERA* cam, int vw, int vh) {
+static void draw_vehicle_cham(const RR_PLAYER* p, const RR_CAMERA* cam, int vw, int vh, const BR_Config* b) {
     const RR_VEHICLE_MESH* mesh = vehicle_mesh(p);
     if (!mesh) return;
     RR_V3 positions[RR_VEHICLE_MESH_MAX_VERTICES];
@@ -411,9 +411,17 @@ static void draw_vehicle_cham(const RR_PLAYER* p, const RR_CAMERA* cam, int vw, 
         top = fminf(top, y); bottom = fmaxf(bottom, y);
     }
     if (right < 0 || bottom < 0 || left > vw || top > vh || right - left < 2.0f || bottom - top < 2.0f) return;
-    /* A single translucent amber identifies the vehicle independently of the
-     * role colors used for its occupants. */
-    RGBA color = RARGB(80, 255, 181, 65);
+    /* Couleur du panneau Vehicles : slot 16 (model fill), même mécanique d'occlusion
+     * que le cham joueur ; l'alpha 80/255 de l'ambre d'origine est préservé en
+     * modulation pour garder la translucidité caractéristique du cham véhicule. */
+    int occluded = 0;
+    if (b && b->los_dim) {
+        int lv = rr_los_check(cam->pos, p->pos);
+        if (lv == 1) occluded = 1;
+    }
+    RGBA color = elem_col(b, 16, occluded, 0);
+    unsigned ca = ((color >> 24) * 80u) / 255u;
+    color = (color & 0x00FFFFFFu) | (ca << 24);
     r_fill_triangles(projected, mesh->vertices, mesh->triangles, mesh->faces, color);
 }
 
@@ -472,7 +480,7 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
             const RR_PLAYER* p=&arr[i];
             if (!p->valid || !p->is_vehicle || !p->vehicle_cham_valid ||
                 (b->max_distance>0 && p->dist>(float)b->max_distance/100.0f)) continue;
-            draw_vehicle_cham(p, cam, vw, vh);
+            draw_vehicle_cham(p, cam, vw, vh, b);
         }
         gpu_mesh_flush();
         for (int i=0;i<n;++i) {
