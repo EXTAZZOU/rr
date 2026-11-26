@@ -1164,6 +1164,120 @@ static void diag_pre_map(void) {
     diag("==== END PRE-MAP ====");
 }
 
+/* After a mapping failure, dump the last CodeIntegrity Operational events to
+ * diag.log. A NtLoadDriver refused with ACCESS_DENIED while VBS / HVCI / CG and
+ * the registry MSVDBL are all off almost always means an in-kernel Microsoft
+ * blocklist or an in-kernel CI policy decided to refuse. That decision leaves
+ * an event with the exact reason in Microsoft-Windows-CodeIntegrity/Operational.
+ * We spawn powershell (already on the box) to query it, capture its stdout
+ * through a pipe, and append it to diag.log. */
+static void diag_ci_events(void) {
+    diag("---- CodeIntegrity Operational events (last 5 min) ----");
+
+    SECURITY_ATTRIBUTES sa;
+    ZeroMemory(&sa, sizeof(sa));
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    HANDLE r_pipe = NULL, w_pipe = NULL;
+    if (!CreatePipe(&r_pipe, &w_pipe, &sa, 0)) {
+        diag("CreatePipe (CI events) failed (err 0x%08lX)", GetLastError());
+        return;
+    }
+    SetHandleInformation(r_pipe, HANDLE_FLAG_INHERIT, 0);
+
+    /* Pull the 20 most recent CodeIntegrity Operational events; filter to the
+     * last five minutes to only catch our failure. SilentlyContinue because the
+     * log is empty on systems where CI never refused anything. */
+    wchar_t cmd[2048];
+    _snwprintf_s(cmd, _countof(cmd), _TRUNCATE,
+        L"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \""
+        L"$ErrorActionPreference='SilentlyContinue';"
+        L"Get-WinEvent -LogName 'Microsoft-Windows-CodeIntegrity/Operational' "
+        L"-MaxEvents 20 | "
+        L"Where-Object { $_.TimeCreated -gt (Get-Date).AddMinutes(-5) } | "
+        L"ForEach-Object { "
+        L"'---'; "
+        L"'Time   : ' + $_.TimeCreated; "
+        L"'Id     : ' + $_.Id; "
+        L"'Level  : ' + $_.LevelDisplayName; "
+        L"'Msg    : ' + ($_.Message -replace '\\r?\\n',' | '); "
+        L"}\"");
+
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    ZeroMemory(&pi, sizeof(pi));
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = w_pipe;
+    si.hStdError = w_pipe;
+    si.hStdInput = NULL;
+
+    BOOL ok = CreateProcessW(NULL, cmd, NULL, NULL, TRUE,
+                             CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+    CloseHandle(w_pipe);
+    if (!ok) {
+        diag("CreateProcess (powershell CI events) failed (err 0x%08lX)",
+             GetLastError());
+        CloseHandle(r_pipe);
+        return;
+    }
+
+    wchar_t logpath[MAX_PATH * 2];
+    diag_path(logpath, _countof(logpath));
+    FILE* f = _wfopen(logpath, L"a");
+    char buf[1024];
+    DWORD n = 0;
+    while (ReadFile(r_pipe, buf, (DWORD)(sizeof(buf) - 1), &n, NULL) && n > 0) {
+        buf[n] = 0;
+        if (f) { fputs(buf, f); fflush(f); }
+        pump();
+    }
+    if (f) {
+        fputs("\n---- end CI events ----\n", f);
+        fclose(f);
+    }
+    CloseHandle(r_pipe);
+    WaitForSingleObject(pi.hProcess, 15000);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+}
+
+/* Snapshot of DSE / HVCI runtime state via NtQuerySystemInformation. The
+ * registry already reports configuration, but the runtime can diverge: a
+ * kernel-embedded Microsoft driver blocklist (introduced Win11 22H2, hardened
+ * each release) refuses drivers independently of the registry key. */
+static void diag_ci_runtime(void) {
+    /* SystemCodeIntegrityInformation = 103 */
+    typedef struct { ULONG Length; ULONG CodeIntegrityOptions; } CI_INFO;
+    typedef NTSTATUS (WINAPI* PFN_NTQSI)(ULONG, PVOID, ULONG, PULONG);
+    HMODULE nd = GetModuleHandleW(L"ntdll.dll");
+    PFN_NTQSI p = nd ? (PFN_NTQSI)GetProcAddress(nd, "NtQuerySystemInformation") : NULL;
+    if (!p) { diag("CI runtime: NtQuerySystemInformation not resolvable"); return; }
+    CI_INFO ci;
+    ci.Length = sizeof(ci);
+    ci.CodeIntegrityOptions = 0;
+    ULONG ret = 0;
+    NTSTATUS st = p(103, &ci, sizeof(ci), &ret);
+    if (st < 0) { diag("CI runtime: NtQuerySystemInformation failed 0x%08lX", st); return; }
+    diag("CI runtime: CodeIntegrityOptions = 0x%08lX", ci.CodeIntegrityOptions);
+    diag("  bit 0x0001 ENABLED              : %s", (ci.CodeIntegrityOptions & 0x1)  ? "YES" : "no");
+    diag("  bit 0x0002 TESTSIGN             : %s", (ci.CodeIntegrityOptions & 0x2)  ? "YES" : "no");
+    diag("  bit 0x0004 UMCI_ENABLED         : %s", (ci.CodeIntegrityOptions & 0x4)  ? "YES" : "no");
+    diag("  bit 0x0008 UMCI_AUDITMODE       : %s", (ci.CodeIntegrityOptions & 0x8)  ? "YES" : "no");
+    diag("  bit 0x0010 UMCI_EXCLUSIONPATHS  : %s", (ci.CodeIntegrityOptions & 0x10) ? "YES" : "no");
+    diag("  bit 0x0020 TEST_BUILD           : %s", (ci.CodeIntegrityOptions & 0x20) ? "YES" : "no");
+    diag("  bit 0x0040 PREPROD_BUILD        : %s", (ci.CodeIntegrityOptions & 0x40) ? "YES" : "no");
+    diag("  bit 0x0080 DEBUGMODE_ENABLED    : %s", (ci.CodeIntegrityOptions & 0x80) ? "YES" : "no");
+    diag("  bit 0x0200 FLIGHT_BUILD         : %s", (ci.CodeIntegrityOptions & 0x200) ? "YES" : "no");
+    diag("  bit 0x0400 FLIGHTING_ENABLED    : %s", (ci.CodeIntegrityOptions & 0x400) ? "YES" : "no");
+    diag("  bit 0x0800 HVCI_KMCI_ENABLED    : %s", (ci.CodeIntegrityOptions & 0x800) ? "YES" : "no");
+    diag("  bit 0x1000 HVCI_KMCI_AUDITMODE  : %s", (ci.CodeIntegrityOptions & 0x1000) ? "YES" : "no");
+    diag("  bit 0x2000 HVCI_KMCI_STRICTMODE : %s", (ci.CodeIntegrityOptions & 0x2000) ? "YES" : "no");
+    diag("  bit 0x4000 HVCI_IUM_ENABLED     : %s", (ci.CodeIntegrityOptions & 0x4000) ? "YES" : "no");
+    diag("  bit 0x8000 WHQL_ENFORCEMENT_MODE: %s", (ci.CodeIntegrityOptions & 0x8000) ? "YES" : "no");
+}
+
 static void diag_post_map(DWORD exit_code) {
     diag("==== POST-MAP DIAGNOSTIC ====");
     diag("kd2.exe exit code: %lu (0x%08lX)", exit_code, exit_code);
@@ -1187,6 +1301,13 @@ static void diag_post_map(DWORD exit_code) {
     diag_device(L"WmPort");
     diag_reg(L"SYSTEM\\WmPort", L"Key");
     diag_reg(L"SYSTEM\\WmPort", L"BootState");
+
+    /* Only pull CI runtime + event log on failure : if kd2 succeeded there is
+     * nothing to diagnose and the powershell spawn would just waste time. */
+    if (exit_code != 0) {
+        diag_ci_runtime();
+        diag_ci_events();
+    }
     diag("==== END POST-MAP ====");
 }
 
