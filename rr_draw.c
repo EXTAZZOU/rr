@@ -494,8 +494,10 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
             if (!player_class_allowed(p, b)) continue;
             /* Le cham est le remplissage du model : affiché dès que model_fill >= 1 (Flat ou Textured). */
             if (b->model_fill < 1) continue;
-            float fx,fy,hx,hy;
-            if (!game_w2s(cam,&p->pos,vw,vh,&fx,&fy) && !game_w2s(cam,&p->head,vw,vh,&hx,&hy)) continue;
+            /* Early-out de coût : si ni les pieds ni la tête ne se projettent, on
+             * saute le skinning de RR_CHAM_VERTICES sommets que mesh_highlight
+             * refait de toute façon. Les coordonnées écran ne sont pas lues ici. */
+            if (!game_w2s(cam,&p->pos,vw,vh,NULL,NULL) && !game_w2s(cam,&p->head,vw,vh,NULL,NULL)) continue;
             if (mesh_highlight(p,cam,vw,vh, elem_col(b, 16, 0, p->dead))) {
                 ++b->telem_cham_n;
             }

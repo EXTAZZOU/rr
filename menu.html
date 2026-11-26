@@ -446,6 +446,11 @@ const SLOT_PATH = (() => {
   }
   return m;
 })();
+/* Table inverse symétrique pour les états : évite de recopier en dur idx===5/10
+ * dans sendColor, même motif qui a produit le slot 3 orphelin. */
+const STATE_SLOT = Object.fromEntries(
+  Object.entries(COLOR_INDEX.state).map(([k, v]) => [v, k])
+);
 
 /* Les chips "Manage elements" pilotent les toggles d'affichage ESP globaux. */
 const CHIP_KEY = {
@@ -498,7 +503,7 @@ function sendColor() {
    * y a laissé une autre casse. */
   const U = hex.toUpperCase();
   if (S.pick.state) {
-    const stName = idx === 5 ? "downed" : idx === 10 ? "targeted" : null;
+    const stName = STATE_SLOT[idx] || null;
     if (stName) for (const k of Object.keys(T)) {
       const st = T[k].states;
       if (st && st[stName]) st[stName].color = U;
