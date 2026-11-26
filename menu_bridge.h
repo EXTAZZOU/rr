@@ -9,8 +9,28 @@ extern "C" {
 #endif
 
 #define BR_MAGIC 0x57444D31u
-#define BR_VERSION 14u
-#define BR_COLOR_COUNT 15
+#define BR_VERSION 16u
+#define BR_COLOR_COUNT 17
+
+/* Table d'indexation des slots couleur (identique pour color[] et color_occluded[]) :
+ *  0  réservé (marqueur par défaut)
+ *  1  box (trait)
+ *  2  skel
+ *  3  model (trait)
+ *  4  health (borne haute du dégradé PV)
+ *  5  downed (état)
+ *  6  name
+ *  7  weapon
+ *  8  dist
+ *  9  armor
+ * 10  targeted (état)
+ * 11  hptext (borne haute)
+ * 12  crouch
+ * 13  libre — ne pas réattribuer sans concertation
+ * 14  aim
+ * 15  box fill
+ * 16  model fill
+ */
 
 /* Shared schema for the WebView, defaults and on-disk settings.
  * Each entry is a field, default, minimum and maximum. */
@@ -68,7 +88,7 @@ extern "C" {
     X(norecoil_jitter, 0, 0, 20) \
     X(nospread_on, 0, 0, 1) \
     X(show_hpbar, 1, 0, 1) \
-    X(show_snapline, 0, 0, 1) \
+    X(show_snapline, 0, 0, 3) \
     X(snapline_from_crosshair, 1, 0, 1) \
     X(los_dim, 0, 0, 1) \
     X(xhair_on, 0, 0, 1) \
@@ -76,14 +96,20 @@ extern "C" {
     X(xhair_size, 8, 2, 40) \
     X(xhair_thick, 1, 1, 4) \
     X(xhair_outline, 1, 0, 1) \
-    X(streamsafe_on, 1, 0, 1)
+    X(streamsafe_on, 1, 0, 1) \
+    X(show_robbers, 1, 0, 1) \
+    X(show_civilians, 1, 0, 1) \
+    X(box_fill, 0, 0, 3) \
+    X(model_fill, 0, 0, 2)
 
 typedef struct BR_Config {
     unsigned int magic, version;
 #define BR_DECLARE(field, initial, minimum, maximum) int field;
     BR_SETTINGS(BR_DECLARE)
 #undef BR_DECLARE
+    /* Deux variantes par slot : visible et derrière les murs. Mêmes index pour les deux. */
     struct { unsigned char rgb[3]; } color[BR_COLOR_COUNT];
+    struct { unsigned char rgb[3]; } color_occluded[BR_COLOR_COUNT];
 
     int menu_open;
     int telem_targets;
@@ -95,6 +121,10 @@ typedef struct BR_Config {
     int show_vehicles;
 #endif
 } BR_Config;
+
+/* Lecture couleur bornée : écrête `idx` dans [0, BR_COLOR_COUNT-1], ne renvoie jamais NULL.
+ * occluded != 0 → color_occluded[idx], sinon color[idx]. */
+const unsigned char* br_color(const BR_Config* config, int idx, int occluded);
 
 /* Unrecognized values use the same no-rarity bucket as the loot renderer. */
 static int br_loot_rarity_visible(const BR_Config* config, int rarity) {

@@ -99,8 +99,23 @@ static std::string build_state_json(BR_Config* b) {
                  (unsigned)b->color[i].rgb[0], (unsigned)b->color[i].rgb[1], (unsigned)b->color[i].rgb[2]);
         s += rgb;
     }
+    s += "},\"colors_occluded\":{";
+    for (int i = 0; i < BR_COLOR_COUNT; ++i) {
+        char rgb[40];
+        snprintf(rgb, sizeof(rgb), "%s\"%d\":[%u,%u,%u]", i ? "," : "", i,
+                 (unsigned)b->color_occluded[i].rgb[0], (unsigned)b->color_occluded[i].rgb[1], (unsigned)b->color_occluded[i].rgb[2]);
+        s += rgb;
+    }
     s += "}}";
     return s;
+}
+
+/* Accesseur couleur borné : jamais NULL, l'index est écrêté. */
+extern "C" const unsigned char* br_color(const BR_Config* cfg, int idx, int occluded) {
+    if (!cfg) { static const unsigned char zero[3] = {0,0,0}; return zero; }
+    if (idx < 0) idx = 0;
+    if (idx >= BR_COLOR_COUNT) idx = BR_COLOR_COUNT - 1;
+    return occluded ? cfg->color_occluded[idx].rgb : cfg->color[idx].rgb;
 }
 
 static std::string build_telem_json(BR_Config* b) {
@@ -145,13 +160,21 @@ static HRESULT STDMETHODCALLTYPE msg_cb(ICoreWebView2* sender,
             br_config_set(b, body.substr(0,c2).c_str(), atoi(body.substr(c2+1).c_str()));
     }
     else if (cmd == "col") {
+        /* Nouveau format : col:<idx>:<v|w>:<r>,<g>,<b>. L'ancien 'col:idx:r,g,b' est
+         * refusé explicitement — pas en silence — pour forcer la mise à jour du client. */
         int index, red, green, blue;
-        if (sscanf(body.c_str(), "%d:%d,%d,%d", &index, &red, &green, &blue) == 4 &&
+        char side = 0;
+        if (sscanf(body.c_str(), "%d:%c:%d,%d,%d", &index, &side, &red, &green, &blue) == 5 &&
+            (side == 'v' || side == 'w') &&
             index >= 0 && index < BR_COLOR_COUNT &&
             (unsigned)red <= 255 && (unsigned)green <= 255 && (unsigned)blue <= 255) {
-            b->color[index].rgb[0] = (unsigned char)red;
-            b->color[index].rgb[1] = (unsigned char)green;
-            b->color[index].rgb[2] = (unsigned char)blue;
+            unsigned char* target = (side == 'w' ? b->color_occluded[index].rgb : b->color[index].rgb);
+            target[0] = (unsigned char)red;
+            target[1] = (unsigned char)green;
+            target[2] = (unsigned char)blue;
+        } else if (sscanf(body.c_str(), "%d:%d,%d,%d", &index, &red, &green, &blue) == 4) {
+            /* Ancien protocole : on refuse bruyamment pour que le dev voie la régression. */
+            wv_send("toast:col: legacy 3-field format rejected (needs v|w side)");
         }
     }
     else if (cmd == "act") {
@@ -397,15 +420,20 @@ BR_Config* br_get(void){
 #undef BR_DEFAULT
         g_br_inst.menu_open = 1;
         static const unsigned char pal[BR_COLOR_COUNT][3] = {
-            { 86,168,255},{255, 86, 86},{120,255,140},{ 86,255,246},
-            {158,158,158},{255,255,255},{255,255,255},{255,255,255},
-            {255,255,255},{255,255,255},{255,255,255},{120,255,140},
-            {255,176, 66},{139, 92,246},{220,220,220},
+            {220,220,220},{ 86,168,255},{255, 86, 86},{120,255,140},
+            {120,255,140},{255,255,255},{255,255,255},{255,255,255},
+            {255,255,255},{255,255,255},{255,215, 90},{120,255,140},
+            {255,176, 66},{139, 92,246},{220,220,220},{ 86,168,255},
+            {120,255,140},
         };
         for(int i=0;i<BR_COLOR_COUNT;i++){
             g_br_inst.color[i].rgb[0]=pal[i][0];
             g_br_inst.color[i].rgb[1]=pal[i][1];
             g_br_inst.color[i].rgb[2]=pal[i][2];
+            /* Par défaut : variante occluse = visible assombrie à 55% ; l'UI pourra l'écraser. */
+            g_br_inst.color_occluded[i].rgb[0]=(unsigned char)(pal[i][0]*55/100);
+            g_br_inst.color_occluded[i].rgb[1]=(unsigned char)(pal[i][1]*55/100);
+            g_br_inst.color_occluded[i].rgb[2]=(unsigned char)(pal[i][2]*55/100);
         }
     }
     return &g_br_inst;
