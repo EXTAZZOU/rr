@@ -430,10 +430,13 @@ const SRC_KEY = { criminals: "show_robbers", cops: "show_police", clan: "show_cl
 /* 0 réservé, 13 libre, 15 et 16 pour les remplissages.
  * model: 3 reste réservé après cd4e074 (widgets Outline/Width/Color retirés
  * du FORM.model) ; aucun site de rendu C ne le lit encore — ne pas supprimer
- * sans concertation, la réservation disparaîtrait sans trace. */
+ * sans concertation, la réservation disparaîtrait sans trace.
+ * Slot 10 (targeted) retiré du state : rien dans RR_PLAYER ne porte la cible
+ * aim courante, câbler aurait été un tell visuel en killcam. Slot réservé
+ * côté backend comme le 3, jamais lu ni écrit par l'UI. */
 const COLOR_INDEX = {
   el:    { box: 1, skel: 2, model: 3, health: 4, name: 6, weapon: 7, dist: 8, armor: 9, hptext: 11, crouch: 12, aim: 14, boxFill: 15, modelFill: 16 },
-  state: { downed: 5, targeted: 10 },
+  state: { downed: 5 },
 };
 /* Table inverse slot → chemin de profil, construite depuis COLOR_INDEX.
  * Les états 5 et 10 n'y figurent pas : ils vivent dans T[src].states, pas dans c. */
@@ -591,7 +594,7 @@ const KEEP = Object.values(VIEWS).map(v => { const im = new Image(); im.src = v.
 const T = {};
 function addSource(group, key, label, v, w, view) {
   T[key] = { label, view, enabled: true, profile: newProfile(v, w), snap: "Off", maxd: 100, fade: false,
-    states: view === "char" ? { targeted: { mode: "recolor", on: true, color: "#FFD166" }, downed: { mode: "recolor", on: true, color: "#FFFFFF" } } : null };
+    states: view === "char" ? { downed: { mode: "recolor", on: true, color: "#FFFFFF" } } : null };
   SRC[group].push(key);
 }
 const SRC = { chars: [], vehicles: [] };
@@ -600,7 +603,7 @@ addSource("chars", "cops", "Cops", "#4D8DFF", "#2C4F9E", "char");
 addSource("chars", "civilians", "Civilians", "#E6E8EE", "#8A8D99", "char");
 addSource("chars", "clan", "Clan/Party", "#B07CFF", "#6A4AA8", "char");
 addSource("vehicles", "cars", "Vehicles", "#40E870", "#FF4040", "car");
-const STATE = { targeted: ["Targeted", 1], downed: ["Downed", 1] };
+const STATE = { downed: ["Downed", 1] };
 
 const PAGES = {
   combat: { title: "Combat", icon: '<path d="M3 8h13l5 3-5 2H9v5H5v-5H3z"/>', tabs: {
@@ -1176,7 +1179,7 @@ function applyState(config) {
       const st = T[srcKey].states;
       if (st) {
         if (st.downed   && config.colors[5])  st.downed.color   = rgbHex(config.colors[5]);
-        if (st.targeted && config.colors[10]) st.targeted.color = rgbHex(config.colors[10]);
+        /* st.targeted retiré : widget inerte, slot 10 réservé côté backend. */
       }
     }
   }
