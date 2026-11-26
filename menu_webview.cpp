@@ -262,6 +262,19 @@ static HRESULT controller_ready(HRESULT hr, ICoreWebView2Controller* controller)
     g_ctl->put_Bounds(bounds);
     g_ctl->put_IsVisible(IsWindowVisible(g_hwnd));
 
+    /* Make the browser surface transparent so areas not covered by the HTML
+     * menu (margins, radii) do not show the WebView2 default grey fill.
+     * Available on ICoreWebView2Controller2 (Edge 88+ runtime). Alpha=0 means
+     * fully transparent; the HWND's own paint shows through. */
+    ICoreWebView2Controller2* ctl2 = nullptr;
+    if (SUCCEEDED(g_ctl->QueryInterface(__uuidof(ICoreWebView2Controller2),
+                                        reinterpret_cast<void**>(&ctl2))) && ctl2) {
+        COREWEBVIEW2_COLOR transparent{};
+        transparent.A = 0; transparent.R = 0; transparent.G = 0; transparent.B = 0;
+        ctl2->put_DefaultBackgroundColor(transparent);
+        ctl2->Release();
+    }
+
     hr = g_ctl->get_CoreWebView2(&g_wv);
     if (SUCCEEDED(hr) && g_wv) {
         auto handler = MakeMsgCb([](ICoreWebView2* sender, ICoreWebView2WebMessageReceivedEventArgs* args) {
