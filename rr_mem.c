@@ -53,43 +53,105 @@ void rr_set_backend(int backend) {
 }
 int rr_backend_active(void) { return g_backend_active; }
 
-/* ---- rpm_diag : one-line entries in rpm_diag.log beside the overlay exe --- */
-static void rpm_diag(const char* fmt, ...) {
-    wchar_t exepath[MAX_PATH * 2], exedir[MAX_PATH * 2];
-    GetModuleFileNameW(NULL, exepath, (DWORD)_countof(exepath));
-    wcsncpy_s(exedir, _countof(exedir), exepath, _TRUNCATE);
-    wchar_t* s = wcsrchr(exedir, L'\\');
-    if (s) *s = 0;
-    wchar_t path[MAX_PATH * 2];
-    _snwprintf_s(path, _countof(path), _TRUNCATE, L"%s\\rpm_diag.log", exedir);
-    FILE* f = _wfopen(path, L"a");
+/* ---- rpm_diag : one-line entries in rpm_diag.log beside the overlay exe ---
+ * Path is absolute and resolved once at init; the first line of the file is
+ * always a self-description so the reader can confirm which binary/pid wrote
+ * it (crucial when the overlay runs under a masqueraded name in %TEMP%). */
+static wchar_t g_rpm_log_path[MAX_PATH * 2] = L"";
+static int     g_rpm_log_initialised = 0;
+
+static void rpm_diag_vprintf(const char* fmt, va_list ap) {
+    FILE* f = _wfopen(g_rpm_log_path, L"a");
     if (!f) return;
     SYSTEMTIME st;
     GetLocalTime(&st);
     fprintf(f, "[%02u:%02u:%02u.%03u] ",
             st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
-    va_list ap;
-    va_start(ap, fmt);
     vfprintf(f, fmt, ap);
-    va_end(ap);
     fputc('\n', f);
     fclose(f);
 }
 
+static void rpm_diag(const char* fmt, ...) {
+    if (!g_rpm_log_initialised) {
+        wchar_t exepath[MAX_PATH * 2], exedir[MAX_PATH * 2];
+        GetModuleFileNameW(NULL, exepath, (DWORD)_countof(exepath));
+        wcsncpy_s(exedir, _countof(exedir), exepath, _TRUNCATE);
+        wchar_t* s = wcsrchr(exedir, L'\\');
+        if (s) *s = 0;
+        _snwprintf_s(g_rpm_log_path, _countof(g_rpm_log_path), _TRUNCATE,
+                     L"%s\\rpm_diag.log", exedir);
+        g_rpm_log_initialised = 1;
+        /* First line is a self-description so the reader doesn't have to guess
+         * which process wrote this and where the file is. */
+        char selfA[1024];
+        WideCharToMultiByte(CP_UTF8, 0, exepath, -1, selfA, sizeof(selfA),
+                            NULL, NULL);
+        SYSTEMTIME now;
+        GetLocalTime(&now);
+        FILE* init = _wfopen(g_rpm_log_path, L"a");
+        if (init) {
+            fprintf(init,
+                    "========================================================\n"
+                    "rpm_diag.log  (%04u-%02u-%02u %02u:%02u:%02u)\n"
+                    "self_exe  : %s\n"
+                    "self_pid  : %lu\n"
+                    "========================================================\n",
+                    now.wYear, now.wMonth, now.wDay,
+                    now.wHour, now.wMinute, now.wSecond,
+                    selfA, (unsigned long)GetCurrentProcessId());
+            fclose(init);
+        }
+    }
+    va_list ap;
+    va_start(ap, fmt);
+    rpm_diag_vprintf(fmt, ap);
+    va_end(ap);
+}
+
+/* Confirm the pid retained is a live process and report its image name, so a
+ * stale pid from a previous session can be caught before everything downstream
+ * blames RPM for a missing process. */
+static void rpm_log_target_identity(uint32_t pid, HANDLE h) {
+    wchar_t exepath[MAX_PATH * 2];
+    DWORD len = (DWORD)_countof(exepath);
+    exepath[0] = 0;
+    if (!QueryFullProcessImageNameW(h, 0, exepath, &len)) {
+        DWORD e = GetLastError();
+        rpm_diag("target pid=%u : QueryFullProcessImageName FAILED err=0x%08lX",
+                 pid, e);
+        return;
+    }
+    char exeA[1024];
+    WideCharToMultiByte(CP_UTF8, 0, exepath, -1, exeA, sizeof(exeA), NULL, NULL);
+    DWORD exit_code = 0;
+    BOOL alive = GetExitCodeProcess(h, &exit_code) && exit_code == STILL_ACTIVE;
+    rpm_diag("target pid=%u : image=\"%s\" alive=%s exit_code=0x%08lX",
+             pid, exeA, alive ? "YES" : "NO (DEAD!)", exit_code);
+}
+
 /* Fire exactly once per (pid, event) so a tight polling loop doesn't flood
  * the log. Resets when the pid changes. */
-static int g_rpm_logged_open     = 0;
-static int g_rpm_logged_openfail = 0;
-static int g_rpm_logged_peb      = 0;
-static int g_rpm_logged_readfail = 0;
+static int g_rpm_logged_open      = 0;
+static int g_rpm_logged_openfail  = 0;
+static int g_rpm_logged_peb       = 0;
+static int g_rpm_logged_readfail  = 0;
+static int g_rpm_logged_writefail = 0;
+static int g_rpm_logged_modules   = 0;
 
-/* Lazy OpenProcess for the current pid. Reopens if the pid changed. */
+/* Lazy OpenProcess for the current pid. Reopens if the pid changed. The
+ * handle is cached for the full session once obtained (including the read-only
+ * fallback) so a filtered access mask is not re-probed on every call. */
 static HANDLE rpm_handle(void) {
     if (g_rr_pid != g_rpm_pid_cached) {
         if (g_rpm_handle) { CloseHandle(g_rpm_handle); g_rpm_handle = NULL; }
         g_rpm_pid_cached = g_rr_pid;
-        g_rpm_logged_open = g_rpm_logged_openfail = 0;
-        g_rpm_logged_peb = g_rpm_logged_readfail = 0;
+        g_rpm_logged_open      = 0;
+        g_rpm_logged_openfail  = 0;
+        g_rpm_logged_peb       = 0;
+        g_rpm_logged_readfail  = 0;
+        g_rpm_logged_writefail = 0;
+        g_rpm_logged_modules   = 0;
     }
     if (!g_rpm_handle && g_rr_pid) {
         /* VM_READ for ReadProcessMemory, VM_WRITE for WriteProcessMemory,
@@ -104,14 +166,17 @@ static HANDLE rpm_handle(void) {
             rpm_diag("OpenProcess(pid=%u, VM_READ|VM_WRITE|VM_OPERATION|QUERY_LIMITED_INFO) "
                      "FAILED err=0x%08lX (%lu)", g_rr_pid, e, e);
             /* Retry with the smallest useful rights set. If this works but the
-             * full set didn't, the anti-cheat is filtering by requested access. */
+             * full set didn't, the anti-cheat is filtering by requested access.
+             * The handle is cached as-is for the whole session ; no re-probe. */
             HANDLE h2 = OpenProcess(PROCESS_VM_READ
                                     | PROCESS_QUERY_LIMITED_INFORMATION,
                                     FALSE, g_rr_pid);
             if (h2) {
                 rpm_diag("OpenProcess(pid=%u, VM_READ|QUERY_LIMITED_INFO) "
-                         "SUCCEEDED -- continuing READ-ONLY", g_rr_pid);
+                         "SUCCEEDED -- continuing READ-ONLY (no writes possible)",
+                         g_rr_pid);
                 g_rpm_handle = h2;
+                rpm_log_target_identity(g_rr_pid, g_rpm_handle);
             } else {
                 DWORD e2 = GetLastError();
                 rpm_diag("OpenProcess(pid=%u, VM_READ|QUERY_LIMITED_INFO) "
@@ -121,8 +186,9 @@ static HANDLE rpm_handle(void) {
             }
             g_rpm_logged_openfail = 1;
         } else if (g_rpm_handle && !g_rpm_logged_open) {
-            rpm_diag("OpenProcess(pid=%u) ok handle=0x%p", g_rr_pid,
-                     g_rpm_handle);
+            rpm_diag("OpenProcess(pid=%u) ok handle=0x%p (full rights)",
+                     g_rr_pid, g_rpm_handle);
+            rpm_log_target_identity(g_rr_pid, g_rpm_handle);
             g_rpm_logged_open = 1;
         }
     }
@@ -646,7 +712,9 @@ int rr_write(uint64_t addr, const void* in, size_t n) {
          * the original protection even if the write failed. */
         BOOL changed = VirtualProtectEx(h, (LPVOID)(uintptr_t)addr, n,
                                         PAGE_EXECUTE_READWRITE, &old_prot);
+        DWORD vpe_err = changed ? 0 : GetLastError();
         BOOL ok = WriteProcessMemory(h, (LPVOID)(uintptr_t)addr, in, n, &wrote);
+        DWORD wpm_err = ok ? 0 : GetLastError();
         if (changed) {
             DWORD tmp = 0;
             VirtualProtectEx(h, (LPVOID)(uintptr_t)addr, n, old_prot, &tmp);
@@ -654,6 +722,14 @@ int rr_write(uint64_t addr, const void* in, size_t n) {
         }
         g_calls++;
         g_bytes += (long)n;
+        if ((!ok || wrote != n) && !g_rpm_logged_writefail) {
+            rpm_diag("WriteProcessMemory FIRST FAIL addr=0x%llX size=%zu wrote=%zu "
+                     "ok=%d wpm_err=0x%08lX (%lu) ; VirtualProtectEx changed=%d "
+                     "vpe_err=0x%08lX (0x05=ACCESS_DENIED = VM_WRITE absent from handle)",
+                     (unsigned long long)addr, n, (size_t)wrote, ok,
+                     wpm_err, wpm_err, changed, vpe_err);
+            g_rpm_logged_writefail = 1;
+        }
         return ok && wrote == n;
     }
     if (!g_dev || !g_pdioc) return 0;
@@ -833,19 +909,49 @@ int rr_module(const char* name, uint64_t* base, uint32_t* size) {
     *base = 0;
     if (size) *size = 0;
     uint64_t peb = rr_peb();
-    if (!peb) return 0;
+    if (!peb) {
+        if (use_rpm() && !g_rpm_logged_modules) {
+            rpm_diag("rr_module(\"%s\") : rr_peb()=0, PEB walk cannot start", name);
+            g_rpm_logged_modules = 1;
+        }
+        return 0;
+    }
 
     uint64_t ldr = rr_u64(peb + 0x18);
-    if (!PL(ldr)) return 0;
+    if (!PL(ldr)) {
+        if (use_rpm() && !g_rpm_logged_modules) {
+            rpm_diag("rr_module(\"%s\") : PEB=0x%llX but LDR at +0x18 is 0x%llX "
+                     "(not a plausible address) -- RPM reads PEB header but the "
+                     "pointer is 0 or in no-man's-land", name,
+                     (unsigned long long)peb, (unsigned long long)ldr);
+            g_rpm_logged_modules = 1;
+        }
+        return 0;
+    }
     uint64_t head = ldr + 0x10;
     uint64_t cur  = rr_u64(head);
-    if (!PL(cur)) return 0;
+    if (!PL(cur)) {
+        if (use_rpm() && !g_rpm_logged_modules) {
+            rpm_diag("rr_module(\"%s\") : LDR=0x%llX but InLoadOrderModuleList "
+                     "head at +0x10 reads 0x%llX (empty or RPM failed)", name,
+                     (unsigned long long)ldr, (unsigned long long)cur);
+            g_rpm_logged_modules = 1;
+        }
+        return 0;
+    }
 
     wchar_t want[64];
     MultiByteToWideChar(CP_ACP, 0, name, -1, want, 64);
-    size_t want_len = wcslen(want);
+
+    /* Collect enumerated names during the walk so a first failure can dump
+     * them to rpm_diag.log : distinguishes "list walked but no GameAssembly"
+     * from "list empty / walk broken". */
+    char enumerated[16][80];
+    int enum_count = 0;
+    int iters = 0;
 
     for (int i = 0; i < 512; i++) {
+        iters = i + 1;
         if (cur == head || !PL(cur)) break;
 
         /* BaseDllName is a UNICODE_STRING at entry+0x58 */
@@ -857,6 +963,10 @@ int rr_module(const char* name, uint64_t* base, uint32_t* size) {
             if (chars > 255) chars = 255;
             if (rr_read(bbuf, got, chars * 2)) {
                 got[chars] = 0;
+                if (enum_count < 16)
+                    WideCharToMultiByte(CP_UTF8, 0, got, -1,
+                                        enumerated[enum_count++], 80,
+                                        NULL, NULL);
                 if (_wcsicmp(got, want) == 0) {
                     *base = rr_u64(cur + 0x30);
                     if (size) *size = rr_u32(cur + 0x40);
@@ -865,6 +975,19 @@ int rr_module(const char* name, uint64_t* base, uint32_t* size) {
             }
         }
         cur = rr_u64(cur);
+    }
+
+    if (use_rpm() && !g_rpm_logged_modules) {
+        rpm_diag("rr_module(\"%s\") NOT FOUND after walk : PEB=0x%llX LDR=0x%llX "
+                 "iters=%d enumerated=%d (list below)",
+                 name, (unsigned long long)peb, (unsigned long long)ldr,
+                 iters, enum_count);
+        for (int i = 0; i < enum_count; i++)
+            rpm_diag("  mod[%02d] = \"%s\"", i, enumerated[i]);
+        if (enum_count == 0)
+            rpm_diag("  (list empty : walk stopped at the first LDR entry -- "
+                     "RPM cannot read past the LDR head on this target)");
+        g_rpm_logged_modules = 1;
     }
     return 0;
 }
