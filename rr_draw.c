@@ -262,9 +262,8 @@ static int mesh_highlight(const RR_PLAYER* p, const RR_CAMERA* cam, int vw, int 
         positions[i]=world;
     }
     game_w2s_many(cam,positions,RR_CHAM_VERTICES,vw,vh,points);
-    unsigned ha = ((color >> 24) * 0x66u) / 255u;
     return r_fill_triangles(points,RR_CHAM_VERTICES,rr_cham_triangles,RR_CHAM_TRIANGLES,
-                            (color&0x00FFFFFFu)|(ha<<24))>0;
+                            alpha_scale(color, 0x66u))>0;
 }
 
 /* Draw anatomical parent links. Attachment helpers can be parked at the
@@ -420,9 +419,7 @@ static void draw_vehicle_cham(const RR_PLAYER* p, const RR_CAMERA* cam, int vw, 
         int lv = rr_los_check(cam->pos, p->pos);
         if (lv == RR_LOS_BLOCKED) occluded = 1;
     }
-    RGBA color = elem_col(b, 16, occluded, 0);
-    unsigned ca = ((color >> 24) * 80u) / 255u;
-    color = (color & 0x00FFFFFFu) | (ca << 24);
+    RGBA color = alpha_scale(elem_col(b, 16, occluded, 0), 80u);
     r_fill_triangles(projected, mesh->vertices, mesh->triangles, mesh->faces, color);
 }
 
@@ -594,9 +591,7 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
         if (b->show_box) {
             /* Remplissage de boîte : slot 15, dès que box_fill >= 1 (Color/Health drain/Health tint). */
             if (b->box_fill >= 1) {
-                RGBA fill_col = elem_col(b, 15, _los_blocked, p->dead);
-                unsigned fa = ((fill_col >> 24) * 60u) / 255u;
-                fill_col = (fill_col & 0x00FFFFFFu) | (fa << 24);
+                RGBA fill_col = alpha_scale(elem_col(b, 15, _los_blocked, p->dead), 60u);
                 r_fill(bx, by, bw, bh, fill_col);
             }
             corner_box(bx, by, bw, bh, col, line_w);
@@ -654,9 +649,7 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
                 float tw = r_text_width(rt) + 12.0f;
                 float th = 16.0f;
                 float cyb = by - 34.0f;
-                RGBA bg = elem_col(b, 6, _los_blocked, p->dead);
-                unsigned ba = ((bg >> 24) * 170u) / 255u;
-                bg = (bg & 0x00FFFFFFu) | (ba << 24);
+                RGBA bg = alpha_scale(elem_col(b, 6, _los_blocked, p->dead), 170u);
                 r_fill_ellipse(fx, cyb, tw * 0.5f, th * 0.5f, bg);
                 r_text(fx, cyb - 7.0f, rt, RRGB(10, 12, 16), RT_CENTER);
             }
@@ -723,9 +716,7 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
             float bar_x = bx - bar_w - 2.0f;
             /* Fond et bordure : slot 4 (health). Remplissage : slot 4 au-dessus de 99 %, sinon dégradé. */
             RGBA bar_slot = elem_col(b, 4, _los_blocked, p->dead);
-            unsigned ba = ((bar_slot >> 24) * 80u) / 255u;
-            RGBA bg_col = (bar_slot & 0x00FFFFFFu) | (ba << 24);
-            r_fill(bar_x, by, bar_w, bh, bg_col);
+            r_fill(bar_x, by, bar_w, bh, alpha_scale(bar_slot, 80u));
             r_rect(bar_x, by, bar_w, bh, bar_slot, 1.0f);
             float fill_h = bh * hp;
             RGBA fill_col = hp >= 0.99f ? bar_slot : hp_color(hp);

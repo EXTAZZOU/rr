@@ -40,9 +40,10 @@ echo [4/9] rr_unity.c
 cl %CFLAGS% /c rr_unity.c /Fo:rr_unity.obj || goto fail
 echo [5/9] rr_chain.c
 cl %CFLAGS% /c rr_chain.c /Fo:rr_chain.obj || goto fail
-echo [6/9] rr_draw.c + rr_aim.c + los
+echo [6/9] rr_draw.c + rr_aim.c + los + br_color
 cl %CFLAGS% /c rr_draw.c /Fo:rr_draw.obj || goto fail
 cl %CFLAGS% /c rr_aim.c /Fo:rr_aim.obj || goto fail
+cl %CFLAGS% /c br_color.c /Fo:br_color.obj || goto fail
 cl %CFLAGS% /c rr_los_geom.c /Fo:rr_los_geom.obj || goto fail
 cl %CFLAGS% /c rr_los_capture.c /Fo:rr_los_capture.obj || goto fail
 cl %CFLAGS% /c rr_los_runtime.c /Fo:rr_los_runtime.obj || goto fail
@@ -59,7 +60,7 @@ cl %CFLAGS% /c rr_norecoil.c /Fo:rr_norecoil.obj || goto fail
 echo [9/9] resources + link
 rc /nologo /fo app.res app.rc || goto fail
 link /nologo /SUBSYSTEM:WINDOWS /MACHINE:X64 /OUT:antitchoy.exe ^
-  rr_esp.obj rr_game.obj rr_mem.obj rr_unity.obj rr_chain.obj rr_draw.obj rr_aim.obj ^
+  rr_esp.obj rr_game.obj rr_mem.obj rr_unity.obj rr_chain.obj rr_draw.obj rr_aim.obj br_color.obj ^
   rr_los_geom.obj rr_los_capture.obj rr_los_runtime.obj rr_los.obj rr_spawn.obj ^
  rr_nodescan.obj rr_classscan.obj rr_find.obj rr_norecoil.obj ^
   gpu.obj menu_webview.obj app.res ^

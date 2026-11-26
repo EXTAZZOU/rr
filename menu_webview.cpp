@@ -110,13 +110,8 @@ static std::string build_state_json(BR_Config* b) {
     return s;
 }
 
-/* Accesseur couleur borné : jamais NULL, l'index est écrêté. */
-extern "C" const unsigned char* br_color(const BR_Config* cfg, int idx, int occluded) {
-    if (!cfg) { static const unsigned char zero[3] = {0,0,0}; return zero; }
-    if (idx < 0) idx = 0;
-    if (idx >= BR_COLOR_COUNT) idx = BR_COLOR_COUNT - 1;
-    return occluded ? cfg->color_occluded[idx].rgb : cfg->color[idx].rgb;
-}
+/* br_color et alpha_scale vivent dans br_color.c (TU pure, zéro dépendance
+ * graphique). Déclarés dans menu_bridge.h et linkés via br_color.obj. */
 
 static std::string build_telem_json(BR_Config* b) {
     std::string s("{");

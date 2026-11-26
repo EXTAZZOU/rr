@@ -4,6 +4,8 @@
 #ifndef MENU_BRIDGE_H
 #define MENU_BRIDGE_H
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -125,6 +127,12 @@ typedef struct BR_Config {
 /* Lecture couleur bornée : écrête `idx` dans [0, BR_COLOR_COUNT-1], ne renvoie jamais NULL.
  * occluded != 0 → color_occluded[idx], sinon color[idx]. */
 const unsigned char* br_color(const BR_Config* config, int idx, int occluded);
+
+/* Renormalise l'alpha d'une couleur (0xAARRGGBB) sur un plafond donné, en conservant
+ * l'ordre relatif des états. Extrait de cinq copies inline qui recopiaient la même
+ * arithmétique dans rr_draw.c. RGBA == uint32_t, les call sites existants passent
+ * leur RGBA sans conversion. */
+uint32_t alpha_scale(uint32_t color, unsigned ceiling);
 
 /* Unrecognized values use the same no-rarity bucket as the loot renderer. */
 static int br_loot_rarity_visible(const BR_Config* config, int rarity) {
