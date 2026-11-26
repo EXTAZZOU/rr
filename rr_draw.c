@@ -28,21 +28,23 @@ static RGBA slot_color(int i) {
     return RARGB(255, c[0], c[1], c[2]);
 }
 
-/* Map replicated role names to marker colors for cops, robbers and civilians. */
-static RGBA role_color(const char* role) {
-    if (strstr(role, "cop")) return RRGB(90, 170, 255);
-    if (strstr(role, "robber")) return RRGB(255, 86, 86);
-    if (strstr(role, "hubber") || strstr(role, "civilian")) return RRGB(220, 220, 220);
-    if (strstr(role, "citizen")) return RRGB(200, 230, 200);
-    return 0;
+/* Couleur d'un élément ESP : lit br_color pour le slot donné (dead force slot 5),
+ * applique le voile 80% si occluded, 60% si mort visible, sinon pleine opacité. */
+static RGBA elem_col(const BR_Config* b, int idx, int occluded, int dead) {
+    int slot = dead ? 5 : idx;
+    const unsigned char* c = br_color(b, slot, occluded);
+    unsigned a = occluded ? (255u * 80u / 100u) : (dead ? (255u * 60u / 100u) : 255u);
+    return RARGB(a, c[0], c[1], c[2]);
 }
 
-static RGBA player_color(const RR_PLAYER* p) {
-    if (p->relationships & RR_REL_CLAN) return RRGB(218, 153, 255);
-    if (p->relationships & RR_REL_POLICE) return RRGB(86, 255, 246);
-    if (p->dead) return slot_color(5);
-    RGBA color = role_color(p->role);
-    return color ? color : slot_color(0);
+/* Filtre par classe de joueur. Les joueurs en relation (clan, police) sont
+ * déjà filtrés par rr_relationship_allowed ; ici on gère uniquement les
+ * nouveaux toggles show_robbers et show_civilians. */
+static int player_class_allowed(const RR_PLAYER* p, const BR_Config* b) {
+    if (p->relationships & (RR_REL_CLAN | RR_REL_POLICE)) return 1;
+    if (strstr(p->role, "robber")) return b->show_robbers;
+    if (strstr(p->role, "hubber") || strstr(p->role, "civilian") || strstr(p->role, "citizen")) return b->show_civilians;
+    return 1;
 }
 
 static void corner_box(float x, float y, float w, float h, RGBA col, float stroke) {
@@ -344,7 +346,7 @@ static void draw_radar(const RR_PLAYER* arr, int n, const RR_CAMERA* cam,
         if (p->is_vehicle && (!b->radar_world || !b->show_vehicle_markers)) continue;
         if (p->is_loot) {
             if (!b->radar_world || !world_marker_visible(p, b)) continue;
-        } else if (!p->is_vehicle && !rr_relationship_allowed(p->relationships, b->show_clan, b->show_police)) continue;
+        } else if (!p->is_vehicle && (!rr_relationship_allowed(p->relationships, b->show_clan, b->show_police) || !player_class_allowed(p, b))) continue;
         float dx = p->pos.x - local->pos.x, dz = p->pos.z - local->pos.z;
         float lateral=dx*fz-dz*fx, forward=dx*fx+dz*fz;
         if (!(fabsf(lateral)<=range && fabsf(forward)<=range)) continue;
@@ -362,7 +364,7 @@ static void draw_radar(const RR_PLAYER* arr, int n, const RR_CAMERA* cam,
             r_fill_ellipse(x, y, 2.3f, 2.3f, color);
             continue;
         }
-        RGBA color = player_color(p);
+        RGBA color = elem_col(b, 1, 0, p->dead);
         if (p->dead) r_ellipse(x, y, 3.0f, 3.0f, color, 1.0f);
         else {
             r_fill_ellipse(x, y, 4.5f, 4.5f, RRGB(16, 11, 25));
@@ -480,9 +482,12 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
             if (p->is_vehicle) continue;
             if (!b->cham_on || !p->cham_valid) continue;
             if (!rr_relationship_allowed(p->relationships, b->show_clan, b->show_police)) continue;
+            if (!player_class_allowed(p, b)) continue;
+            /* Le cham est le remplissage du model : affiché uniquement si model_fill >= 2. */
+            if (b->model_fill < 2) continue;
             float fx,fy,hx,hy;
             if (!game_w2s(cam,&p->pos,vw,vh,&fx,&fy) && !game_w2s(cam,&p->head,vw,vh,&hx,&hy)) continue;
-            if (mesh_highlight(p,cam,vw,vh,player_color(p))) {
+            if (mesh_highlight(p,cam,vw,vh, elem_col(b, 16, 0, p->dead))) {
                 ++b->telem_cham_n;
             }
         }
@@ -504,6 +509,7 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
         const RR_PLAYER* p = &arr[i];
         if (!p->valid || (p->local && !b->show_self)) continue;
         if (!rr_relationship_allowed(p->relationships, b->show_clan, b->show_police)) continue;
+        if (!p->is_loot && !p->is_vehicle && !player_class_allowed(p, b)) continue;
         /* Menu settings are stored in centimetres; positions use metres. */
         if (b->max_distance > 0 && p->dist > (float)b->max_distance / 100.0f) continue;
 
@@ -563,27 +569,22 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
         float by = fminf(hy, fy);
         if (bx < -200 || bx > vw + 200 || by < -200 || by > vh + 200) continue;
 
-        RGBA col = player_color(p);
-        if (p->dead) {
-            /* downed: dim, but still visible */
-            int a = 255 * 60 / 100;
-            col = (col & 0x00FFFFFFu) | ((uint32_t)a << 24);
-        }
-
-        /* LOS dim: if the player is behind geometry, drop the alpha so the
-         * marker reads as "not currently shootable". Uses the shared LOS
-         * worker; returns 0=UNKNOWN, 1=BLOCKED, 2=CLEAR. */
+        /* LOS : évalué une fois, piloté par br_color via color_occluded + voile 80%. */
         int _los_blocked = 0;
         if (b->los_dim && !p->local && !p->is_vehicle && !p->is_loot) {
             int lv = rr_los_check(cam->pos, p->head);
-            if (lv == 1) {
-                _los_blocked = 1;
-                int a = 255 * 40 / 100;
-                col = (col & 0x00FFFFFFu) | ((uint32_t)a << 24);
-            }
+            if (lv == 1) _los_blocked = 1;
         }
+        /* Couleur principale du joueur (box) : slot 1, slot 5 si mort, voile si occluded. */
+        RGBA col = elem_col(b, 1, _los_blocked, p->dead);
 
         if (b->show_box) {
+            /* Remplissage de boîte : slot 15, seulement si box_fill >= 2 (Health drain/tint). */
+            if (b->box_fill >= 2) {
+                RGBA fill_col = elem_col(b, 15, _los_blocked, p->dead);
+                fill_col = (fill_col & 0x00FFFFFFu) | (60u << 24);
+                r_fill(bx, by, bw, bh, fill_col);
+            }
             corner_box(bx, by, bw, bh, col, line_w);
         }
         if (b->show_head) {
@@ -593,11 +594,12 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
             float r = bw * 0.11f;
             if (r < 2.0f) r = 2.0f;
             if (r > 9.0f) r = 9.0f;
-            r_fill_ellipse(hx, hy, r, r, col);
+            r_fill_ellipse(hx, hy, r, r, elem_col(b, 14, _los_blocked, p->dead));
         }
         if (b->show_skeleton && (!p->inveh || p->full_rig) && !p->hidden_in_object &&
             (b->skel_distance <= 0 || p->dist <= (float)b->skel_distance / 100.0f)) {
-            gpu_pen(col, line_w);
+            RGBA skel_col = elem_col(b, 2, _los_blocked, p->dead);
+            gpu_pen(skel_col, line_w);
             if (p->full_rig && p->nbones == RR_CHAM_BONES) {
                 draw_full_skeleton(p,cam,vw,vh);
             } else if (p->nbones > 1) {
@@ -613,7 +615,7 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
                     float r = fabsf(fy - hyy) * 0.075f;
                     if (r < 2.5f) r = 2.5f;
                     if (r > 11.0f) r = 11.0f;
-                    r_fill_ellipse(hxx, hyy - r * 0.5f, r, r, col);
+                    r_fill_ellipse(hxx, hyy - r * 0.5f, r, r, skel_col);
                 }
             } else {
                 /* no rig data yet: two-segment torso fallback */
@@ -633,12 +635,13 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
             else if (strstr(p->role, "hubber")) rt = "CIVILIAN";
             else if (!strstr(p->role, "citizen")) rt = 0;
             if (rt) {
-                /* Draw a filled role badge: blue for cops, red for robbers, green for citizens. */
+                /* Badge de rôle : bg semi-transparent avec la couleur du name (slot 6). */
                 gpu_font(13.0f);
                 float tw = r_text_width(rt) + 12.0f;
                 float th = 16.0f;
                 float cyb = by - 34.0f;
-                RGBA bg = (col & 0x00FFFFFFu) | (170u << 24);
+                RGBA bg = elem_col(b, 6, _los_blocked, p->dead);
+                bg = (bg & 0x00FFFFFFu) | (170u << 24);
                 r_fill_ellipse(fx, cyb, tw * 0.5f, th * 0.5f, bg);
                 r_text(fx, cyb - 7.0f, rt, RRGB(10, 12, 16), RT_CENTER);
             }
@@ -651,7 +654,7 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
             else label[0] = 0;
             if (label[0]) {
                 gpu_font(12.0f);
-                r_text(fx, by - 15.0f, label, slot_color(6), RT_CENTER | RT_OUTLINE);
+                r_text(fx, by - 15.0f, label, elem_col(b, 6, _los_blocked, p->dead), RT_CENTER | RT_OUTLINE);
             }
         }
         if (p->hidden_in_object) {
@@ -670,7 +673,7 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
             char buf[32];
             fmt_num(buf, sizeof(buf), (unsigned)(p->dist + 0.5f), " m");
             gpu_font(11.0f);
-            r_text(fx, label_y, buf, slot_color(8), RT_CENTER | RT_OUTLINE);
+            r_text(fx, label_y, buf, elem_col(b, 8, _los_blocked, p->dead), RT_CENTER | RT_OUTLINE);
             label_y += 12.0f;
         }
         if (b->show_weapon && p->weapon[0]) {
@@ -683,14 +686,16 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
             }
             wbuf[k] = 0;
             gpu_font(10.0f);
-            r_text(fx, label_y, wbuf, slot_color(7), RT_CENTER | RT_OUTLINE);
+            r_text(fx, label_y, wbuf, elem_col(b, 7, _los_blocked, p->dead), RT_CENTER | RT_OUTLINE);
             label_y += 11.0f;
         }
         if (b->show_health && p->health >= 0) {
             char health[32];
             snprintf(health, sizeof health, "HP: %d", p->health);
             gpu_font(10.0f);
-            r_text(fx, label_y, health, slot_color(6), RT_CENTER | RT_OUTLINE);
+            /* hptext : slot 11 au-dessus de 99 %, sinon dégradé rouge→jaune→vert. */
+            RGBA hptxt_col = p->health >= 99 ? elem_col(b, 11, _los_blocked, p->dead) : hp_color((float)p->health / 100.0f);
+            r_text(fx, label_y, health, hptxt_col, RT_CENTER | RT_OUTLINE);
             label_y += 11.0f;
         }
         /* HP bar: thin vertical gauge glued to the left of the box.
@@ -701,11 +706,14 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
             if (hp > 1.0f) hp = 1.0f;
             float bar_w = 4.0f;
             float bar_x = bx - bar_w - 2.0f;
-            RGBA bg_col = (col & 0x00FFFFFFu) | (80u << 24);
+            /* Fond et bordure : slot 4 (health). Remplissage : slot 4 au-dessus de 99 %, sinon dégradé. */
+            RGBA bar_slot = elem_col(b, 4, _los_blocked, p->dead);
+            RGBA bg_col = (bar_slot & 0x00FFFFFFu) | (80u << 24);
             r_fill(bar_x, by, bar_w, bh, bg_col);
-            r_rect(bar_x, by, bar_w, bh, slot_color(6), 1.0f);
+            r_rect(bar_x, by, bar_w, bh, bar_slot, 1.0f);
             float fill_h = bh * hp;
-            r_fill(bar_x, by + (bh - fill_h), bar_w, fill_h, hp_color(hp));
+            RGBA fill_col = hp >= 0.99f ? bar_slot : hp_color(hp);
+            r_fill(bar_x, by + (bh - fill_h), bar_w, fill_h, fill_col);
         }
 
         /* Snap-line candidate: this is the nearest-to-crosshair enemy
@@ -724,16 +732,16 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
         }
         if (b->show_crouch && p->crouch == 1) {
             gpu_font(10.0f);
-            r_text(fx, label_y, "CROUCHING", slot_color(6), RT_CENTER | RT_OUTLINE);
+            r_text(fx, label_y, "CROUCHING", elem_col(b, 12, _los_blocked, p->dead), RT_CENTER | RT_OUTLINE);
             label_y += 11.0f;
         }
         if (b->show_armor && p->armor == 1) {
             gpu_font(9.0f);
-            r_text(fx + bw * 0.5f + 3.0f, by + 2.0f, "ARMOR", slot_color(9), RT_LEFT | RT_OUTLINE);
+            r_text(fx + bw * 0.5f + 3.0f, by + 2.0f, "ARMOR", elem_col(b, 9, _los_blocked, p->dead), RT_LEFT | RT_OUTLINE);
         }
         if (p->dead) {
             gpu_font(10.0f);
-            r_text(fx, by + bh * 0.5f, "DOWN", slot_color(5), RT_CENTER | RT_OUTLINE);
+            r_text(fx, by + bh * 0.5f, "DOWN", elem_col(b, 5, _los_blocked, 1), RT_CENTER | RT_OUTLINE);
         }
         drawn++;
     }
