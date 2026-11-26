@@ -435,6 +435,18 @@ const COLOR_INDEX = {
   el:    { box: 1, skel: 2, model: 3, health: 4, name: 6, weapon: 7, dist: 8, armor: 9, hptext: 11, crouch: 12, aim: 14, boxFill: 15, modelFill: 16 },
   state: { downed: 5, targeted: 10 },
 };
+/* Table inverse slot → chemin de profil, construite depuis COLOR_INDEX.
+ * Les états 5 et 10 n'y figurent pas : ils vivent dans T[src].states, pas dans c. */
+const SLOT_PATH = (() => {
+  const m = {};
+  for (const [el, slot] of Object.entries(COLOR_INDEX.el)) {
+    if (el === "boxFill")        m[slot] = { el: "box",   prop: "fillColor" };
+    else if (el === "modelFill") m[slot] = { el: "model", prop: "fillColor" };
+    else                         m[slot] = { el,          prop: "color" };
+  }
+  return m;
+})();
+
 /* Les chips "Manage elements" pilotent les toggles d'affichage ESP globaux. */
 const CHIP_KEY = {
   box: "show_box", skel: "show_skeleton", model: "cham_on", aim: "show_head",
@@ -1102,6 +1114,35 @@ function applyState(config) {
   if (prof) {
     if ("box_fill"   in config) prof.c.box.fill   = FILL[config.box_fill] || FILL[0];
     if ("model_fill" in config) prof.c.model.fill = MODEL_FILL[config.model_fill] || MODEL_FILL[0];
+  }
+  /* Hydratation des couleurs persistées. build_state_json sérialise les 17 slots
+   * (color[] visible, color_occluded[] derrière mur) mais applyState les ignorait :
+   * l'UI repartait des défauts de newProfile et le prochain pick émettait une valeur
+   * dérivée d'une base fausse. v ↔ color[], w ↔ color_occluded[]. */
+  const rgbHex = (a) => "#" + a.map((n) => (n & 255).toString(16).padStart(2, "0")).join("");
+  if (config.colors && config.colors_occluded) {
+    for (const srcKey of Object.keys(T)) {
+      const q = T[srcKey].profile;
+      if (!q || !q.c) continue;
+      const vw = VIEWS[T[srcKey].view];
+      const els = vw ? vw.els : null;   /* null = pas de restriction */
+      for (const slotStr of Object.keys(config.colors)) {
+        const path = SLOT_PATH[+slotStr];
+        if (!path) continue;
+        if (els && !els.includes(path.el)) continue;   /* pas de chip → pas d'injection */
+        const dst = q.c[path.el];
+        if (!dst || !dst[path.prop]) continue;
+        const v = config.colors[slotStr], w = config.colors_occluded[slotStr];
+        if (v && v.length === 3) dst[path.prop].v = rgbHex(v);
+        if (w && w.length === 3) dst[path.prop].w = rgbHex(w);
+      }
+      /* États : couleur unique côté UI (pas de v/w), globale côté backend. */
+      const st = T[srcKey].states;
+      if (st) {
+        if (st.downed   && config.colors[5])  st.downed.color   = rgbHex(config.colors[5]);
+        if (st.targeted && config.colors[10]) st.targeted.color = rgbHex(config.colors[10]);
+      }
+    }
   }
   /* Tiers loot. */
   for (const label of Object.keys(LOOT_TIER)) {
