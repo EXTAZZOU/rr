@@ -160,11 +160,12 @@ static HRESULT STDMETHODCALLTYPE msg_cb(ICoreWebView2* sender,
             br_config_set(b, body.substr(0,c2).c_str(), atoi(body.substr(c2+1).c_str()));
     }
     else if (cmd == "col") {
-        /* Nouveau format : col:<idx>:<v|w>:<r>,<g>,<b>. L'ancien 'col:idx:r,g,b' est
-         * refusé explicitement — pas en silence — pour forcer la mise à jour du client. */
-        int index, red, green, blue;
+        /* Nouveau format : col:<idx>:<v|w>:<r>,<g>,<b>. L'ancien 'col:idx:r,g,b' et
+         * toute entrée hors bornes sont refusés explicitement — pas en silence. */
+        int index, red, green, blue, consumed = 0;
         char side = 0;
-        if (sscanf(body.c_str(), "%d:%c:%d,%d,%d", &index, &side, &red, &green, &blue) == 5 &&
+        int new_fields = sscanf(body.c_str(), "%d:%c:%d,%d,%d%n", &index, &side, &red, &green, &blue, &consumed);
+        if (new_fields == 5 && consumed == (int)body.size() &&
             (side == 'v' || side == 'w') &&
             index >= 0 && index < BR_COLOR_COUNT &&
             (unsigned)red <= 255 && (unsigned)green <= 255 && (unsigned)blue <= 255) {
@@ -175,6 +176,8 @@ static HRESULT STDMETHODCALLTYPE msg_cb(ICoreWebView2* sender,
         } else if (sscanf(body.c_str(), "%d:%d,%d,%d", &index, &red, &green, &blue) == 4) {
             /* Ancien protocole : on refuse bruyamment pour que le dev voie la régression. */
             wv_send("toast:col: legacy 3-field format rejected (needs v|w side)");
+        } else {
+            wv_send("toast:col: malformed or out-of-range (expected col:<idx>:<v|w>:<r>,<g>,<b>)");
         }
     }
     else if (cmd == "act") {

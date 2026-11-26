@@ -324,6 +324,7 @@ static int cfg_save_at(const wchar_t* path, const BR_Config* b) {
     FILE* f = _wfopen(temp, L"w");
     if (!f) return 0;
     fprintf(f, "# CoreRR settings\n");
+    fprintf(f, "# version=%u\n", BR_VERSION);
     for (size_t i = 0; i < sizeof(g_cfg_ints) / sizeof(g_cfg_ints[0]); ++i) {
         const CFG_INT* field = &g_cfg_ints[i];
         int value = *(const int*)((const char*)b + field->offset);
@@ -332,6 +333,9 @@ static int cfg_save_at(const wchar_t* path, const BR_Config* b) {
     for (int i = 0; i < BR_COLOR_COUNT; ++i)
         fprintf(f, "color%d=%u,%u,%u,0\n", i, (unsigned)b->color[i].rgb[0],
                 (unsigned)b->color[i].rgb[1], (unsigned)b->color[i].rgb[2]);
+    for (int i = 0; i < BR_COLOR_COUNT; ++i)
+        fprintf(f, "colorocc%d=%u,%u,%u,0\n", i, (unsigned)b->color_occluded[i].rgb[0],
+                (unsigned)b->color_occluded[i].rgb[1], (unsigned)b->color_occluded[i].rgb[2]);
     int ok = !ferror(f);
     if (fclose(f) != 0) ok = 0;
     if (ok && MoveFileExW(temp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return 1;
@@ -345,14 +349,35 @@ static int cfg_load_at(const wchar_t* path, BR_Config* b) {
     BR_Config loaded = *b;
     int legacy_visible = -1, legacy_head = -1;
     int have_los = 0, have_bone = 0;
+    unsigned file_version = 0;
     char line[256];
     while (fgets(line, sizeof(line), f)) {
         char* nl = strpbrk(line, "\r\n");
         if (nl) *nl = 0;
-        if (!line[0] || line[0] == '#') continue;
+        if (!line[0]) continue;
+        /* Entête commenté : on en lit uniquement la version pour détecter les formats antérieurs. */
+        if (line[0] == '#') {
+            unsigned v;
+            if (sscanf(line, "# version=%u", &v) == 1) file_version = v;
+            continue;
+        }
         char* value = strchr(line, '=');
         if (!value) continue;
         *value++ = 0;
+        /* Palette occluse : préfixe distinct pour cohabiter avec color<N>=. */
+        if (!strncmp(line, "colorocc", 8)) {
+            char* end;
+            long index = strtol(line + 8, &end, 10);
+            int red, green, blue;
+            if (end != line + 8 && !*end && index >= 0 && index < BR_COLOR_COUNT &&
+                sscanf(value, "%d,%d,%d", &red, &green, &blue) == 3 &&
+                (unsigned)red <= 255 && (unsigned)green <= 255 && (unsigned)blue <= 255) {
+                loaded.color_occluded[index].rgb[0] = (unsigned char)red;
+                loaded.color_occluded[index].rgb[1] = (unsigned char)green;
+                loaded.color_occluded[index].rgb[2] = (unsigned char)blue;
+            }
+            continue;
+        }
         if (!strncmp(line, "color", 5)) {
             char* end;
             long index = strtol(line + 5, &end, 10);
@@ -387,6 +412,10 @@ static int cfg_load_at(const wchar_t* path, BR_Config* b) {
         BR_SETTINGS(BR_APPLY)
 #undef BR_APPLY
         memcpy(b->color, loaded.color, sizeof(b->color));
+        /* Fichier antérieur à la v16 : pas de palette occluse persistée, on garde
+         * celle que br_get() a initialisée (55 % du visible par défaut). */
+        if (file_version >= 16)
+            memcpy(b->color_occluded, loaded.color_occluded, sizeof(b->color_occluded));
     }
     return ok;
 }
