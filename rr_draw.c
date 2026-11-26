@@ -262,8 +262,9 @@ static int mesh_highlight(const RR_PLAYER* p, const RR_CAMERA* cam, int vw, int 
         positions[i]=world;
     }
     game_w2s_many(cam,positions,RR_CHAM_VERTICES,vw,vh,points);
+    unsigned ha = ((color >> 24) * 0x66u) / 255u;
     return r_fill_triangles(points,RR_CHAM_VERTICES,rr_cham_triangles,RR_CHAM_TRIANGLES,
-                            (color&0x00FFFFFFu)|0x66000000u)>0;
+                            (color&0x00FFFFFFu)|(ha<<24))>0;
 }
 
 /* Draw anatomical parent links. Attachment helpers can be parked at the
@@ -720,7 +721,8 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
             float bar_x = bx - bar_w - 2.0f;
             /* Fond et bordure : slot 4 (health). Remplissage : slot 4 au-dessus de 99 %, sinon dégradé. */
             RGBA bar_slot = elem_col(b, 4, _los_blocked, p->dead);
-            RGBA bg_col = (bar_slot & 0x00FFFFFFu) | (80u << 24);
+            unsigned ba = ((bar_slot >> 24) * 80u) / 255u;
+            RGBA bg_col = (bar_slot & 0x00FFFFFFu) | (ba << 24);
             r_fill(bar_x, by, bar_w, bh, bg_col);
             r_rect(bar_x, by, bar_w, bh, bar_slot, 1.0f);
             float fill_h = bh * hp;
