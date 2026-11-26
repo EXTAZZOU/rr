@@ -964,11 +964,278 @@ static int g_launcher_hidden = 0;
  * (0x139 subcode 3). The overlay hides itself the same way and never restores,
  * so enabling this option must follow that pattern. Off by default after a
  * crash: `hide_launcher=1` in RobRunAIO.ini or --hide-launcher turns it on. */
+
+/* -------------------------------------------- diag -- mapping diagnostic --- */
+/* Every mapping attempt now writes a verbose log to diag.log beside the
+ * launcher. The point is to make a failed mapping reproducible from a single
+ * file: registry state, service residues, device presence, extracted file
+ * hashes, and the full stdout/stderr of kd2.exe captured through a pipe. */
+
+/* diag.log lives in g_workdir (the payload folder) so the original launcher and
+ * its masquerade child (which is the one that actually maps) share one file.
+ * If g_workdir is not set yet, fall back to the launcher's own folder. */
+static void diag_path(wchar_t* out, size_t cap) {
+    const wchar_t* dir = g_workdir[0] ? g_workdir : NULL;
+    wchar_t exedir[MAX_PATH * 2];
+    if (!dir) {
+        exe_dir(exedir, _countof(exedir));
+        dir = exedir;
+    }
+    path_join(dir, L"diag.log", out, cap);
+}
+
+static void diag_vlog(const char* fmt, va_list ap) {
+    char line[2048];
+    _vsnprintf_s(line, _countof(line), _TRUNCATE, fmt, ap);
+    wchar_t path[MAX_PATH * 2];
+    diag_path(path, _countof(path));
+    FILE* f = _wfopen(path, L"a");
+    if (f) {
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        fprintf(f, "[%02u:%02u:%02u.%03u] %s\n",
+                st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, line);
+        fclose(f);
+    }
+    wchar_t wline[2048];
+    MultiByteToWideChar(CP_UTF8, 0, line, -1, wline, (int)_countof(wline));
+    log_add(L"[diag] %s", wline);
+}
+
+static void diag(const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    diag_vlog(fmt, ap);
+    va_end(ap);
+}
+
+static void diag_reset(void) {
+    wchar_t path[MAX_PATH * 2];
+    diag_path(path, _countof(path));
+    FILE* f = _wfopen(path, L"w");
+    if (f) {
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        fprintf(f, "==== Logit diag.log started %04u-%02u-%02u %02u:%02u:%02u ====\n",
+                st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+        fclose(f);
+    }
+}
+
+static void diag_reg(const wchar_t* sub, const wchar_t* name) {
+    DWORD v = 0;
+    char subA[512], nameA[128];
+    WideCharToMultiByte(CP_UTF8, 0, sub, -1, subA, sizeof(subA), NULL, NULL);
+    WideCharToMultiByte(CP_UTF8, 0, name, -1, nameA, sizeof(nameA), NULL, NULL);
+    if (reg_dword(sub, name, &v))
+        diag("reg HKLM\\%s\\%s = 0x%08lX (%lu)", subA, nameA, v, v);
+    else
+        diag("reg HKLM\\%s\\%s : not set", subA, nameA);
+}
+
+static void diag_service(const wchar_t* name) {
+    char nameA[128];
+    WideCharToMultiByte(CP_UTF8, 0, name, -1, nameA, sizeof(nameA), NULL, NULL);
+    SC_HANDLE scm = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT);
+    if (!scm) {
+        diag("service %s: OpenSCManager failed (err 0x%08lX)", nameA, GetLastError());
+        return;
+    }
+    SC_HANDLE sh = OpenServiceW(scm, name,
+                                SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG);
+    if (!sh) {
+        DWORD e = GetLastError();
+        if (e == ERROR_SERVICE_DOES_NOT_EXIST)
+            diag("service %s: not installed", nameA);
+        else
+            diag("service %s: OpenService err 0x%08lX", nameA, e);
+        CloseServiceHandle(scm);
+        return;
+    }
+    SERVICE_STATUS_PROCESS ssp;
+    DWORD needed = 0;
+    ZeroMemory(&ssp, sizeof(ssp));
+    QueryServiceStatusEx(sh, SC_STATUS_PROCESS_INFO,
+                         (LPBYTE)&ssp, sizeof(ssp), &needed);
+    BYTE cfgbuf[8192];
+    ZeroMemory(cfgbuf, sizeof(cfgbuf));
+    QUERY_SERVICE_CONFIGW* cfg = (QUERY_SERVICE_CONFIGW*)cfgbuf;
+    if (QueryServiceConfigW(sh, cfg, sizeof(cfgbuf), &needed)) {
+        char binA[512];
+        WideCharToMultiByte(CP_UTF8, 0,
+                            cfg->lpBinaryPathName ? cfg->lpBinaryPathName : L"",
+                            -1, binA, sizeof(binA), NULL, NULL);
+        diag("service %s: state=%lu start=%lu bin=%s",
+             nameA, ssp.dwCurrentState, cfg->dwStartType, binA);
+    } else {
+        diag("service %s: state=%lu (QueryConfig failed 0x%08lX)",
+             nameA, ssp.dwCurrentState, GetLastError());
+    }
+    CloseServiceHandle(sh);
+    CloseServiceHandle(scm);
+}
+
+static void diag_device(const wchar_t* name) {
+    char nameA[128];
+    WideCharToMultiByte(CP_UTF8, 0, name, -1, nameA, sizeof(nameA), NULL, NULL);
+    wchar_t wpath[256];
+    _snwprintf_s(wpath, _countof(wpath), _TRUNCATE, L"\\\\.\\%s", name);
+    HANDLE h = CreateFileW(wpath, GENERIC_READ,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE,
+                           NULL, OPEN_EXISTING, 0, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        DWORD e = GetLastError();
+        diag("device \\\\.\\%s : not openable (err 0x%08lX)", nameA, e);
+    } else {
+        diag("device \\\\.\\%s : PRESENT (open ok)", nameA);
+        CloseHandle(h);
+    }
+}
+
+static void diag_file(const wchar_t* path) {
+    char pathA[1024];
+    WideCharToMultiByte(CP_UTF8, 0, path, -1, pathA, sizeof(pathA), NULL, NULL);
+    DWORD attrs = GetFileAttributesW(path);
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        diag("file %s : MISSING", pathA);
+        return;
+    }
+    HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL,
+                           OPEN_EXISTING, 0, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        diag("file %s : present (attrs 0x%08lX) but unreadable (err 0x%08lX)",
+             pathA, attrs, GetLastError());
+        return;
+    }
+    LARGE_INTEGER sz;
+    sz.QuadPart = 0;
+    GetFileSizeEx(h, &sz);
+    CloseHandle(h);
+    char hex[65];
+    hex[0] = 0;
+    int ok = sha256_file(path, hex);
+    diag("file %s : size=%lld sha256=%s", pathA, (long long)sz.QuadPart,
+         ok ? hex : "(hash failed)");
+}
+
+static void diag_pre_map(void) {
+    char wdA[1024], exedirA[1024];
+    wchar_t exedir[MAX_PATH * 2];
+    exe_dir(exedir, _countof(exedir));
+    WideCharToMultiByte(CP_UTF8, 0, g_workdir, -1, wdA, sizeof(wdA), NULL, NULL);
+    WideCharToMultiByte(CP_UTF8, 0, exedir,    -1, exedirA, sizeof(exedirA), NULL, NULL);
+
+    diag("==== PRE-MAP DIAGNOSTIC ====");
+    diag("launcher dir : %s", exedirA);
+    diag("payload workdir : %s", wdA);
+    diag("hypervisor_present (CPUID): %s", hypervisor_present() ? "YES" : "no");
+
+    diag_reg(L"SYSTEM\\CurrentControlSet\\Control\\DeviceGuard",
+             L"EnableVirtualizationBasedSecurity");
+    diag_reg(L"SYSTEM\\CurrentControlSet\\Control\\DeviceGuard\\Scenarios\\HypervisorEnforcedCodeIntegrity",
+             L"Enabled");
+    diag_reg(L"SYSTEM\\CurrentControlSet\\Control\\DeviceGuard\\Scenarios\\CredentialGuard",
+             L"Enabled");
+    diag_reg(L"SYSTEM\\CurrentControlSet\\Control\\DeviceGuard\\Scenarios\\WindowsHello",
+             L"Enabled");
+
+    /* MS vulnerable driver blocklist */
+    diag_reg(L"SYSTEM\\CurrentControlSet\\Control\\CI\\Config",
+             L"VulnerableDriverBlocklistEnable");
+    diag_reg(L"SYSTEM\\CurrentControlSet\\Control\\CI",
+             L"VulnerableDriverBlocklistEnable");
+
+    /* Residual services from previous mapping attempts */
+    diag_service(L"WmPort");
+    diag_service(L"iqvw64e");
+    diag_service(L"Nal");
+
+    /* Residual devices */
+    diag_device(L"WmPort");
+    diag_device(L"Nal");
+
+    /* Extracted files */
+    wchar_t p[MAX_PATH * 2];
+    path_join(g_workdir, MAPPER_EXE, p, _countof(p));
+    diag_file(p);
+    path_join(g_workdir, DRIVER_IMAGE, p, _countof(p));
+    diag_file(p);
+
+    diag("==== END PRE-MAP ====");
+}
+
+static void diag_post_map(DWORD exit_code) {
+    diag("==== POST-MAP DIAGNOSTIC ====");
+    diag("kd2.exe exit code: %lu (0x%08lX)", exit_code, exit_code);
+    switch (exit_code) {
+        case 0:
+            diag("exit 0  : mapper reports SUCCESS");
+            break;
+        case 1:
+            diag("exit 1  : kd2 return 1 = intel_driver::load OR read_file OR map_driver failed");
+            diag("          the kd2 stdout block above should name the exact step");
+            break;
+        case 0xFFFFFFFFu:
+            diag("exit -1 : launcher timed out waiting for kd2");
+            break;
+        default:
+            diag("exit %lu : non-standard; possible kd2 crash code", exit_code);
+            break;
+    }
+    diag_service(L"WmPort");
+    diag_service(L"iqvw64e");
+    diag_device(L"WmPort");
+    diag_reg(L"SYSTEM\\WmPort", L"Key");
+    diag_reg(L"SYSTEM\\WmPort", L"BootState");
+    diag("==== END POST-MAP ====");
+}
+
+/* Mirror a buffer of kd2 stdout bytes into the GUI log, one line at a time. */
+static void kd2_mirror(char* buf) {
+    char* line = buf;
+    char* nl;
+    while ((nl = strchr(line, '\n'))) {
+        *nl = 0;
+        char* cr = strchr(line, '\r');
+        if (cr) *cr = 0;
+        if (*line) {
+            wchar_t wline[1024];
+            MultiByteToWideChar(CP_UTF8, 0, line, -1, wline, (int)_countof(wline));
+            log_add(L"kd2: %s", wline);
+        }
+        line = nl + 1;
+    }
+    if (*line) {
+        wchar_t wline[1024];
+        MultiByteToWideChar(CP_UTF8, 0, line, -1, wline, (int)_countof(wline));
+        log_add(L"kd2: %s", wline);
+    }
+}
+
+/* Run kd2 with stdout+stderr redirected through an inherited anonymous pipe.
+ * The read end is drained into diag.log and mirrored into the GUI log, so a
+ * failure is diagnosable from the written file alone. */
 static int run_mapper(void) {
-    wchar_t exe[MAX_PATH * 2], cmd[MAX_PATH * 4];
+    wchar_t exe[MAX_PATH * 2];
     path_join(g_workdir, MAPPER_EXE, exe, _countof(exe));
-    /* kd2 always maps "kernel-mode.sys" from its own directory; --auto keeps it
-     * from waiting for a key press. */
+
+    diag_pre_map();
+
+    SECURITY_ATTRIBUTES sa;
+    ZeroMemory(&sa, sizeof(sa));
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+
+    HANDLE r_pipe = NULL, w_pipe = NULL;
+    if (!CreatePipe(&r_pipe, &w_pipe, &sa, 0)) {
+        diag("CreatePipe failed (err 0x%08lX); kd2 stdout will be lost",
+             GetLastError());
+        r_pipe = w_pipe = NULL;
+    } else {
+        SetHandleInformation(r_pipe, HANDLE_FLAG_INHERIT, 0);
+    }
+
+    wchar_t cmd[MAX_PATH * 4];
     _snwprintf_s(cmd, _countof(cmd), _TRUNCATE, L"\"%s\" --auto", exe);
 
     STARTUPINFOW si;
@@ -977,14 +1244,54 @@ static int run_mapper(void) {
     si.cb = sizeof(si);
     ZeroMemory(&pi, sizeof(pi));
 
-    if (!CreateProcessW(exe, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW,
-                        NULL, g_workdir, &si, &pi)) {
-        log_add(L"error: could not start kd2.exe (0x%08lX)", GetLastError());
+    DWORD flags = CREATE_NO_WINDOW;
+    if (w_pipe) {
+        si.dwFlags = STARTF_USESTDHANDLES;
+        si.hStdOutput = w_pipe;
+        si.hStdError = w_pipe;
+        si.hStdInput = NULL;
+    }
+
+    BOOL ok = CreateProcessW(exe, cmd, NULL, NULL,
+                             w_pipe ? TRUE : FALSE,
+                             flags, NULL, g_workdir, &si, &pi);
+    if (!ok) {
+        DWORD e = GetLastError();
+        log_add(L"error: could not start kd2.exe (0x%08lX)", e);
+        diag("CreateProcess kd2 failed (err 0x%08lX)", e);
+        if (r_pipe) CloseHandle(r_pipe);
+        if (w_pipe) CloseHandle(w_pipe);
+        diag_post_map(0xFFFFFFFFu);
         return 0;
     }
+    /* Parent must close its copy of the write end so ReadFile below returns
+     * when the child exits (EOF signalled by all write handles closing). */
+    if (w_pipe) CloseHandle(w_pipe);
+
     ui_status(L"Mapping the kernel driver...");
+
+    diag("---- kd2 stdout follows ----");
+    if (r_pipe) {
+        wchar_t logpath[MAX_PATH * 2];
+        diag_path(logpath, _countof(logpath));
+        FILE* f = _wfopen(logpath, L"a");
+        char buf[1024];
+        DWORD n = 0;
+        while (ReadFile(r_pipe, buf, (DWORD)(sizeof(buf) - 1), &n, NULL) && n > 0) {
+            buf[n] = 0;
+            if (f) { fputs(buf, f); fflush(f); }
+            kd2_mirror(buf);
+            pump();
+        }
+        if (f) {
+            fputs("\n---- end kd2 stdout ----\n", f);
+            fclose(f);
+        }
+        CloseHandle(r_pipe);
+    }
+
     DWORD wait = WaitForSingleObject(pi.hProcess, MAP_TIMEOUT_MS);
-    DWORD code = 0xFFFFFFFF;
+    DWORD code = 0xFFFFFFFFu;
     if (wait == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &code);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
@@ -992,9 +1299,13 @@ static int run_mapper(void) {
     if (wait != WAIT_OBJECT_0) {
         log_add(L"error: kd2.exe did not finish within %lu s",
                 (unsigned long)(MAP_TIMEOUT_MS / 1000));
+        diag("TIMEOUT: kd2.exe did not finish within %lu s",
+             (unsigned long)(MAP_TIMEOUT_MS / 1000));
+        diag_post_map(0xFFFFFFFFu);
         return 0;
     }
     log_add(L"kd2.exe exit code: %lu", (unsigned long)code);
+    diag_post_map(code);
     return code == 0;
 }
 
@@ -1555,6 +1866,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmdline, int show) {
     else
         choose_workdir();
 
+    /* Fresh diag.log for every real run. The original launcher resets ; the
+     * masq child inherits the same workdir and appends. */
+    if (!masq_child)
+        diag_reset();
+    diag("process: pid=%lu masq_child=%d selftest=%d dry_run=%d no_map=%d ignore_vbs=%d",
+         (unsigned long)GetCurrentProcessId(), masq_child, selftest,
+         cmdline && wcsstr(cmdline, L"--dry-run") ? 1 : 0,
+         cmdline && wcsstr(cmdline, L"--no-map") ? 1 : 0,
+         ignore_vbs);
+
     if (g_masquerade && !masq_child && !selftest) {
         if (spawn_masquerade(cmdline)) return 0;
     }
@@ -1684,13 +2005,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmdline, int show) {
         if (!run_mapper()) {
             /* A failed mapper run is not fatal when the device is already live
              * from an earlier launch: the transport is what matters. */
-            if (!driver_ready())
+            if (!driver_ready()) {
+                wchar_t diagpath[MAX_PATH * 2];
+                diag_path(diagpath, _countof(diagpath));
                 fail(L"Driver mapping failed.\n\n"
                      L"kd2.exe returned a non-zero exit code.\n\n"
-                     L"Check that:\n"
-                     L"  - VBS, Memory Integrity and Hyper-V are disabled\n"
-                     L"  - no previous mapping is stuck (reboot if unsure)\n\n"
-                     L"The mapper's own window is hidden; MAP-DRIVER.bat shows it.");
+                     L"Diagnostic complet (registry, services, device, hash,\n"
+                     L"stdout kd2) ecrit dans :\n%s\n\n"
+                     L"Envoie ce fichier pour analyse.",
+                     diagpath);
+            }
             log_add(L"warning: mapper failed but the driver is live; continuing");
         }
     }
