@@ -40,6 +40,39 @@ static __declspec(thread) int g_ok = 0;
 
 uint32_t g_rr_pid = 0;
 
+/* -------------------------------------- backend (driver | userspace RPM) --- */
+static int      g_backend         = RR_BACKEND_AUTO;
+static int      g_backend_active  = 0;   /* RR_BACKEND_DRIVER | RR_BACKEND_RPM */
+static HANDLE   g_rpm_handle      = NULL;
+static uint32_t g_rpm_pid_cached  = 0;
+
+void rr_set_backend(int backend) {
+    if (backend == RR_BACKEND_AUTO || backend == RR_BACKEND_DRIVER ||
+        backend == RR_BACKEND_RPM)
+        g_backend = backend;
+}
+int rr_backend_active(void) { return g_backend_active; }
+
+/* Lazy OpenProcess for the current pid. Reopens if the pid changed. */
+static HANDLE rpm_handle(void) {
+    if (g_rr_pid != g_rpm_pid_cached) {
+        if (g_rpm_handle) { CloseHandle(g_rpm_handle); g_rpm_handle = NULL; }
+        g_rpm_pid_cached = g_rr_pid;
+    }
+    if (!g_rpm_handle && g_rr_pid) {
+        /* VM_READ for ReadProcessMemory, VM_WRITE for WriteProcessMemory,
+         * VM_OPERATION for VirtualAllocEx/VirtualProtectEx,
+         * QUERY_LIMITED_INFORMATION for NtQueryInformationProcess(PEB). */
+        g_rpm_handle = OpenProcess(
+            PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION
+            | PROCESS_QUERY_LIMITED_INFORMATION,
+            FALSE, g_rr_pid);
+    }
+    return g_rpm_handle;
+}
+
+static int use_rpm(void) { return g_backend_active == RR_BACKEND_RPM; }
+
 static volatile long g_calls = 0;
 static volatile long g_bytes = 0;
 
@@ -139,32 +172,70 @@ static int verify_key(ULONG key) {
     return st >= 0 && ios.Information == sizeof(out) && out == probe;
 }
 
-int rr_drv_open(void) {
-    if (g_dev && g_pdioc && g_drvkey) return 1;  /* already open */
+/* Try the driver transport. Separate from rr_drv_open because AUTO needs to
+ * know whether the driver actually came up before deciding on RPM fallback. */
+static int try_driver_open(void) {
+    if (g_dev && g_pdioc && g_drvkey) return 1;
     if (!open_device()) return 0;
-    g_pdioc = (fNtDIOC)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtDeviceIoControlFile");
-    if (!g_pdioc) { rr_drv_close(); return 0; }
+    g_pdioc = (fNtDIOC)GetProcAddress(GetModuleHandleW(L"ntdll.dll"),
+                                      "NtDeviceIoControlFile");
+    if (!g_pdioc) {
+        if (g_dev) { CloseHandle(g_dev); g_dev = NULL; }
+        return 0;
+    }
     ULONG derived = compute_key();
     if (!load_key()) {
-        if (!derived) { rr_drv_close(); return 0; }
+        if (!derived) {
+            if (g_dev) { CloseHandle(g_dev); g_dev = NULL; }
+            g_pdioc = NULL;
+            return 0;
+        }
         g_drvkey = derived;
         return 1;
     }
-    if (derived && derived != g_drvkey && !verify_key(g_drvkey) && verify_key(derived))
+    if (derived && derived != g_drvkey && !verify_key(g_drvkey) &&
+        verify_key(derived))
         g_drvkey = derived;
     return 1;
 }
 
+int rr_drv_open(void) {
+    /* RPM: no device to open, transport is per-pid and taken lazily at the
+     * first read/write. "Ready" here means the backend is configured. */
+    if (g_backend == RR_BACKEND_RPM) {
+        g_backend_active = RR_BACKEND_RPM;
+        return 1;
+    }
+    if (try_driver_open()) {
+        g_backend_active = RR_BACKEND_DRIVER;
+        return 1;
+    }
+    if (g_backend == RR_BACKEND_AUTO) {
+        /* Driver unavailable (not mapped, WHQL refused, etc.). Fall back to
+         * RPM without failing : the caller asked for AUTO precisely for this. */
+        g_backend_active = RR_BACKEND_RPM;
+        return 1;
+    }
+    /* RR_BACKEND_DRIVER was explicitly requested and the driver is down. */
+    return 0;
+}
+
 void rr_drv_close(void) {
     if (g_dev) { CloseHandle(g_dev); g_dev = NULL; }
+    if (g_rpm_handle) { CloseHandle(g_rpm_handle); g_rpm_handle = NULL; }
+    g_rpm_pid_cached = 0;
     g_pdioc = NULL;
     g_peb = 0;
     g_ok = 0;
+    g_backend_active = 0;
 }
 
 int rr_drv_live(void) { return g_ok; }
 
-int rr_drv_ready(void) { return (g_dev && g_pdioc && g_drvkey) ? 1 : 0; }
+int rr_drv_ready(void) {
+    if (g_backend_active == RR_BACKEND_RPM) return g_rr_pid != 0 ? 1 : 0;
+    return (g_dev && g_pdioc && g_drvkey) ? 1 : 0;
+}
 
 /* Veil (process list). */
 
@@ -175,6 +246,10 @@ typedef struct { ULONG key; ULONG pid; ULONG action; ULONG pad; } VEIL_REQ;
 #pragma pack(pop)
 
 int rr_drv_hide_process(uint32_t pid, int hide) {
+    /* Driver-only operation. The userspace masquerade (WS_EX_TOOLWINDOW,
+     * SetWindowDisplayAffinity, random exe name) is applied separately by
+     * the caller and remains effective in RPM mode. */
+    if (use_rpm()) return 0;
     if (!g_dev || !g_pdioc || !pid) return 0;
     VEIL_REQ r;
     r.key = g_drvkey;
@@ -210,8 +285,22 @@ int rr_drv_alloc_remote(uint32_t pid, size_t size, uint32_t protect, uint64_t* o
     IO_STATUS_BLOCK ios;
 
     if (out) *out = 0;
-    if (!g_dev || !g_pdioc || !pid || size == 0 || size > 0x2000000u) return 0;
-    if (!out) return 0;
+    if (!pid || size == 0 || size > 0x2000000u || !out) return 0;
+    if (use_rpm()) {
+        /* Allocate in the target with VirtualAllocEx. Open a scoped handle in
+         * case the caller is probing a pid different from g_rr_pid. */
+        HANDLE h = (pid == g_rr_pid) ? rpm_handle() :
+                   OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_READ |
+                               PROCESS_VM_WRITE, FALSE, pid);
+        if (!h) return 0;
+        LPVOID base = VirtualAllocEx(h, NULL, size, MEM_COMMIT | MEM_RESERVE,
+                                     protect);
+        if (pid != g_rr_pid) CloseHandle(h);
+        if (!base) return 0;
+        *out = (uint64_t)(uintptr_t)base;
+        return 1;
+    }
+    if (!g_dev || !g_pdioc) return 0;
 
     r.key = g_drvkey;
     r.pid = pid;
@@ -247,7 +336,32 @@ long rr_drv_get_context(uint32_t thread_id, RR_THREAD_CTX* out) {
     IO_STATUS_BLOCK ios;
 
     if (out) memset(out, 0, sizeof(*out));
-    if (!g_dev || !g_pdioc || !thread_id || !out) return -1;
+    if (!thread_id || !out) return -1;
+    if (use_rpm()) {
+        /* Userspace fallback : OpenThread + GetThreadContext. The thread is
+         * briefly suspended ; this matches the driver's read semantics closely
+         * enough for the aim path's RIP/RSP sampling. */
+        HANDLE th = OpenThread(THREAD_GET_CONTEXT | THREAD_SUSPEND_RESUME
+                               | THREAD_QUERY_LIMITED_INFORMATION, FALSE,
+                               thread_id);
+        if (!th) return (long)(ULONG)GetLastError() | 0xC0000000L;
+        CONTEXT ctx;
+        ZeroMemory(&ctx, sizeof(ctx));
+        ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+        DWORD prev = SuspendThread(th);
+        BOOL ok = (prev != (DWORD)-1) && GetThreadContext(th, &ctx);
+        if (prev != (DWORD)-1) ResumeThread(th);
+        CloseHandle(th);
+        if (!ok) return -1;
+        out->rip = ctx.Rip;
+        out->rsp = ctx.Rsp;
+        out->rbp = ctx.Rbp;
+        out->rflags = ctx.EFlags;
+        out->tid = thread_id;
+        out->ok = 1;
+        return 0;
+    }
+    if (!g_dev || !g_pdioc) return -1;
 
     q.key = g_drvkey;
     q.tid = thread_id;
@@ -271,7 +385,23 @@ long rr_drv_get_context(uint32_t thread_id, RR_THREAD_CTX* out) {
 }
 
 int rr_query_region(uint64_t addr, RR_REGION* out) {
-    if (!g_dev || !g_pdioc || !out) return 0;
+    if (!out) return 0;
+    if (use_rpm()) {
+        HANDLE h = rpm_handle();
+        if (!h) return 0;
+        MEMORY_BASIC_INFORMATION mbi;
+        ZeroMemory(&mbi, sizeof(mbi));
+        SIZE_T got = VirtualQueryEx(h, (LPCVOID)(uintptr_t)addr, &mbi,
+                                    sizeof(mbi));
+        if (got != sizeof(mbi)) return 0;
+        out->base    = (uint64_t)(uintptr_t)mbi.BaseAddress;
+        out->size    = (uint64_t)mbi.RegionSize;
+        out->state   = mbi.State;
+        out->protect = mbi.Protect;
+        out->type    = mbi.Type;
+        return 1;
+    }
+    if (!g_dev || !g_pdioc) return 0;
     DRVCMD c;
     c.key = g_drvkey;
     c.size = 0;
@@ -321,7 +451,24 @@ int rr_read_batch(RR_RD_REQ* items, int n) {
     size_t acc = 0;
     int a, b;
 
-    if (!g_dev || !g_pdioc || !items || n <= 0 || n > BATCH_MAX) return 0;
+    if (!items || n <= 0 || n > BATCH_MAX) return 0;
+    if (use_rpm()) {
+        /* RPM has no batch primitive. Loop ReadProcessMemory per item.
+         * Return the count of successful items, like the driver branch. */
+        HANDLE h = rpm_handle();
+        if (!h) return -1;
+        int ok = 0;
+        for (int i = 0; i < n; i++) {
+            SIZE_T got = 0;
+            if (ReadProcessMemory(h, (LPCVOID)(uintptr_t)items[i].addr,
+                                  items[i].dst, items[i].size, &got) &&
+                got == items[i].size)
+                ok++;
+        }
+        g_calls++;
+        return ok > 0 ? ok : -1;
+    }
+    if (!g_dev || !g_pdioc) return 0;
 
     for (int i = 0; i < n; i++) total += items[i].size;
     if (total == 0) return 0;
@@ -394,7 +541,18 @@ int rr_read_batch(RR_RD_REQ* items, int n) {
 /* Read. */
 
 int rr_read(uint64_t addr, void* out, size_t n) {
-    if (!g_dev || !g_pdioc || !out || n == 0 || n > 0x10000u) return 0;
+    if (!out || n == 0 || n > 0x10000u) return 0;
+    if (use_rpm()) {
+        HANDLE h = rpm_handle();
+        if (!h) return 0;
+        SIZE_T got = 0;
+        BOOL ok = ReadProcessMemory(h, (LPCVOID)(uintptr_t)addr, out, n, &got);
+        g_calls++;
+        g_bytes += (long)n;
+        if (ok && got == n) { g_ok = 1; return 1; }
+        return 0;
+    }
+    if (!g_dev || !g_pdioc) return 0;
     DRVCMD c;
     c.key = g_drvkey;
     c.size = n;
@@ -412,7 +570,28 @@ int rr_read(uint64_t addr, void* out, size_t n) {
 }
 
 int rr_write(uint64_t addr, const void* in, size_t n) {
-    if (!g_dev || !g_pdioc || !in || n == 0 || n > 0x10000u) return 0;
+    if (!in || n == 0 || n > 0x10000u) return 0;
+    if (use_rpm()) {
+        HANDLE h = rpm_handle();
+        if (!h) return 0;
+        SIZE_T wrote = 0;
+        DWORD old_prot = 0;
+        /* VirtualProtectEx to RW first so a write into a read-only / RX page
+         * (patched instructions, const data) does not silently fail. Restore
+         * the original protection even if the write failed. */
+        BOOL changed = VirtualProtectEx(h, (LPVOID)(uintptr_t)addr, n,
+                                        PAGE_EXECUTE_READWRITE, &old_prot);
+        BOOL ok = WriteProcessMemory(h, (LPVOID)(uintptr_t)addr, in, n, &wrote);
+        if (changed) {
+            DWORD tmp = 0;
+            VirtualProtectEx(h, (LPVOID)(uintptr_t)addr, n, old_prot, &tmp);
+            FlushInstructionCache(h, (LPCVOID)(uintptr_t)addr, n);
+        }
+        g_calls++;
+        g_bytes += (long)n;
+        return ok && wrote == n;
+    }
+    if (!g_dev || !g_pdioc) return 0;
     size_t total = sizeof(DRVCMD) + n;
     uint8_t* buf = (uint8_t*)malloc(total);
     if (!buf) return 0;
@@ -505,7 +684,40 @@ static int ioctl_ptr(ULONG code, uint64_t* out) {
     return st >= 0 && ios.Information == sizeof(uint64_t) && *out != 0;
 }
 
+/* NtQueryInformationProcess(ProcessBasicInformation) returns PEB in the target.
+ * Resolved lazily; cached across calls to avoid repeated ntdll lookups. */
+typedef struct _RR_PBI {
+    NTSTATUS   ExitStatus;
+    PVOID      PebBaseAddress;
+    ULONG_PTR  AffinityMask;
+    LONG       BasePriority;
+    ULONG_PTR  UniqueProcessId;
+    ULONG_PTR  InheritedFromUniqueProcessId;
+} RR_PBI;
+typedef NTSTATUS (WINAPI* PFN_NTQIP)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+
+static uint64_t rpm_peb_lookup(void) {
+    HANDLE h = rpm_handle();
+    if (!h) return 0;
+    HMODULE nd = GetModuleHandleW(L"ntdll.dll");
+    PFN_NTQIP p = nd ? (PFN_NTQIP)GetProcAddress(nd, "NtQueryInformationProcess")
+                    : NULL;
+    if (!p) return 0;
+    RR_PBI pbi;
+    ZeroMemory(&pbi, sizeof(pbi));
+    ULONG ret = 0;
+    NTSTATUS st = p(h, 0 /* ProcessBasicInformation */, &pbi, sizeof(pbi), &ret);
+    if (st < 0 || !pbi.PebBaseAddress) return 0;
+    return (uint64_t)(uintptr_t)pbi.PebBaseAddress;
+}
+
 uint64_t rr_image_base(void) {
+    if (use_rpm()) {
+        uint64_t peb = rr_peb();
+        if (!peb) return 0;
+        /* PEB +0x10 = ImageBaseAddress on x64. */
+        return rr_u64(peb + 0x10);
+    }
     uint64_t b = 0;
     return ioctl_ptr(IOCTL_BASE, &b) ? b : 0;
 }
@@ -513,6 +725,10 @@ uint64_t rr_image_base(void) {
 uint64_t rr_peb(void) {
     uint64_t b = 0;
     if (g_peb) return g_peb;
+    if (use_rpm()) {
+        g_peb = rpm_peb_lookup();
+        return g_peb;
+    }
     if (ioctl_ptr(IOCTL_PEB, &b)) g_peb = b;
     return g_peb;
 }

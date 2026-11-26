@@ -16,11 +16,24 @@
 extern "C" {
 #endif
 
+/* Backend selection. The driver path (WmPort/kd2) relies on BYOVD mapping,
+ * which Windows 11 with WHQL_ENFORCEMENT_MODE on refuses. RPM uses OpenProcess
+ * + ReadProcessMemory/WriteProcessMemory, which is userspace and works on any
+ * target that allows a handle with the needed rights. AUTO tries driver first
+ * and falls back to RPM. Set once at startup, before rr_drv_open(). */
+enum {
+    RR_BACKEND_AUTO   = 0,   /* driver preferred, RPM fallback when driver absent */
+    RR_BACKEND_DRIVER = 1,   /* fail if driver is not mapped                      */
+    RR_BACKEND_RPM    = 2    /* userspace only, never touch the driver            */
+};
+void rr_set_backend(int backend);
+int  rr_backend_active(void);    /* RR_BACKEND_DRIVER or RR_BACKEND_RPM after open */
+
 /* Lifecycle. */
-int  rr_drv_open(void);          /* 1 = device open and session key loaded   */
+int  rr_drv_open(void);          /* 1 = transport ready for current backend  */
 void rr_drv_close(void);
 int  rr_drv_live(void);          /* 1 = a successful read happened           */
-int  rr_drv_ready(void);         /* 1 = device open and key loaded           */
+int  rr_drv_ready(void);         /* 1 = transport ready for current backend  */
 
 /* Request process hiding (hide != 0) or restoration (hide == 0) through
  * WM_IO_VEIL. Return 1 if the driver accepts the request, otherwise 0.

@@ -315,29 +315,36 @@ static BOOL CALLBACK rr_hide_window_cb(HWND hwnd, LPARAM lp)
     return TRUE;
 }
 
-/* Request process hiding through the driver's WM_IO_VEIL operation.
- * Window styling is applied separately to remove the taskbar/Alt-Tab entry.
- * The return value reports the driver request result, not an independent
- * check of process visibility.
+/* Two-stage hiding :
+ *   1. driver stage (WM_IO_VEIL) : unlinks the process from PsActiveProcessList
+ *      so Task Manager and Toolhelp snapshots skip it. Driver-only ; a no-op
+ *      in RPM mode where the driver is not available at all.
+ *   2. userspace stage (WS_EX_TOOLWINDOW + SW_HIDE) : removes every top-level
+ *      window owned by this process from the taskbar and Alt-Tab. Driver-
+ *      independent, works in both modes, applied unconditionally.
+ *
+ * The userspace stage used to be gated by the driver stage succeeding ; that
+ * hid the overlay only when the driver was up and left it flagrantly visible
+ * on RPM. Apply the two stages independently and return TRUE whenever at least
+ * one stage removed visible surface.
  */
 static BOOL rr_hide_process(void)
 {
     rr_hide_ctx ctx;
-    BOOL hidden;
+    BOOL driver_hidden = FALSE;
 
-    if (!rr_drv_ready() && !rr_drv_open())
-        return FALSE;
+    /* Stage 1 : driver veil. Only tried when the driver backend is up. In RPM
+     * mode rr_drv_hide_process returns 0 immediately, so no handshake runs. */
+    if (rr_drv_ready() || rr_drv_open())
+        driver_hidden = rr_drv_hide_process((uint32_t)GetCurrentProcessId(), 1)
+                        ? TRUE : FALSE;
 
-    hidden = rr_drv_hide_process((uint32_t)GetCurrentProcessId(), 1) ? TRUE : FALSE;
+    /* Stage 2 : userspace window styling. Always. */
+    ctx.pid = GetCurrentProcessId();
+    ctx.changed = FALSE;
+    EnumWindows(rr_hide_window_cb, (LPARAM)&ctx);
 
-    if (hidden)
-    {
-        ctx.pid = GetCurrentProcessId();
-        ctx.changed = FALSE;
-        EnumWindows(rr_hide_window_cb, (LPARAM)&ctx);
-    }
-
-    return hidden;
+    return driver_hidden || ctx.changed;
 }
 
 /* Resolve an export relative to the target process module layout.

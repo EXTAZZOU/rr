@@ -2622,6 +2622,18 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow) {
             if (v) rr_force_pid((uint32_t)v);
         }
     }
+    /* Memory backend. Default = AUTO (try driver then RPM) so an older launch
+     * that doesn't pass the flag still works. The launcher passes "rpm" on
+     * modern Win11 where WHQL enforcement makes the driver unmappable. */
+    {
+        const char* p = lpCmd ? strstr(lpCmd, "--mem-backend ") : NULL;
+        if (p) {
+            p += 14;
+            if (strncmp(p, "rpm", 3) == 0)         rr_set_backend(RR_BACKEND_RPM);
+            else if (strncmp(p, "driver", 6) == 0) rr_set_backend(RR_BACKEND_DRIVER);
+            else if (strncmp(p, "auto", 4) == 0)   rr_set_backend(RR_BACKEND_AUTO);
+        }
+    }
 
     if (mode_test) {
         out_open("selftest.log");

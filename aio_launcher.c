@@ -89,6 +89,13 @@ static int g_hide_launcher = 0;
  * launcher window (useful when reporting a visual bug). */
 static int g_streamsafe_launcher = 1;
 
+/* Memory backend the overlay will use. "auto" (default) tries the mapped
+ * driver first and falls back to userspace RPM when mapping is impossible
+ * (WHQL enforcement, blocklist, etc.). "rpm" skips mapping entirely. "driver"
+ * requires the driver to come up. Settable in Logit.ini (mem_backend=rpm) or
+ * on the cmdline (--mem-backend rpm). */
+static char g_mem_backend[16] = "auto";
+
 /* Each launch copies the launcher and the overlay to a random name from this
  * pool, so Task Manager never shows RobRunAIO.exe or RobRunPort.exe. */
 static int g_masquerade = 1;
@@ -667,6 +674,14 @@ static void load_launcher_ini(void) {
             g_streamsafe_launcher = (n != 0);
         else if (!_wcsicmp(key, L"masquerade"))
             g_masquerade = (n != 0);
+        else if (!_wcsicmp(key, L"mem_backend")) {
+            wchar_t* v = trim_w(eq + 1);
+            char a[16];
+            WideCharToMultiByte(CP_UTF8, 0, v, -1, a, sizeof(a), NULL, NULL);
+            for (char* p = a; *p; ++p) if (*p >= 'A' && *p <= 'Z') *p += 32;
+            if (!strcmp(a, "rpm") || !strcmp(a, "driver") || !strcmp(a, "auto"))
+                strncpy_s(g_mem_backend, _countof(g_mem_backend), a, _TRUNCATE);
+        }
     }
     fclose(f);
 }
@@ -1762,11 +1777,16 @@ static int launch_overlay(OVERLAY* ov) {
     }
     wcsncpy_s(g_overlay_dir, _countof(g_overlay_dir), run_dir, _TRUNCATE);
 
+    wchar_t wbackend[16];
+    MultiByteToWideChar(CP_UTF8, 0, g_mem_backend, -1, wbackend,
+                        (int)_countof(wbackend));
     if (g_expected_pid)
-        _snwprintf_s(cmd, _countof(cmd), _TRUNCATE, L"\"%s\" --pid %lu", exe,
-                     (unsigned long)g_expected_pid);
+        _snwprintf_s(cmd, _countof(cmd), _TRUNCATE,
+                     L"\"%s\" --pid %lu --mem-backend %s",
+                     exe, (unsigned long)g_expected_pid, wbackend);
     else
-        _snwprintf_s(cmd, _countof(cmd), _TRUNCATE, L"\"%s\"", exe);
+        _snwprintf_s(cmd, _countof(cmd), _TRUNCATE,
+                     L"\"%s\" --mem-backend %s", exe, wbackend);
 
     STARTUPINFOW si;
     PROCESS_INFORMATION pi;
@@ -2110,9 +2130,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmdline, int show) {
         return 0;
     }
 
-    if (dry_run || no_map) {
+    /* RPM backend : the overlay reads memory via OpenProcess + ReadProcessMemory
+     * and never touches the driver, so kd2.exe is a no-op. */
+    int skip_map = dry_run || no_map ||
+                   (_stricmp(g_mem_backend, "rpm") == 0);
+    if (skip_map) {
         log_add(L"%s: skipping driver mapping",
-                dry_run ? L"dry run" : L"--no-map");
+                dry_run      ? L"dry run"      :
+                no_map       ? L"--no-map"     :
+                               L"mem_backend=rpm");
     } else if (driver_ready()) {
         log_add(L"driver is already mapped in this session; skipping kd2.exe");
         ui_status(L"Driver already mapped.");
@@ -2124,23 +2150,36 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmdline, int show) {
         ui_status(L"Driver already mapped.");
     } else {
         if (!run_mapper()) {
-            /* A failed mapper run is not fatal when the device is already live
-             * from an earlier launch: the transport is what matters. */
+            /* The mapping failed. On AUTO this is only a warning and the
+             * overlay falls back to RPM. On DRIVER the user asked for the
+             * driver explicitly, so it stays a hard failure. */
             if (!driver_ready()) {
-                wchar_t diagpath[MAX_PATH * 2];
-                diag_path(diagpath, _countof(diagpath));
-                fail(L"Driver mapping failed.\n\n"
-                     L"kd2.exe returned a non-zero exit code.\n\n"
-                     L"Diagnostic complet (registry, services, device, hash,\n"
-                     L"stdout kd2) ecrit dans :\n%s\n\n"
-                     L"Envoie ce fichier pour analyse.",
-                     diagpath);
+                int strict_driver = (_stricmp(g_mem_backend, "driver") == 0);
+                if (strict_driver) {
+                    wchar_t diagpath[MAX_PATH * 2];
+                    diag_path(diagpath, _countof(diagpath));
+                    fail(L"Driver mapping failed.\n\n"
+                         L"kd2.exe returned a non-zero exit code.\n\n"
+                         L"Diagnostic complet (registry, services, device, hash,\n"
+                         L"stdout kd2) ecrit dans :\n%s\n\n"
+                         L"mem_backend=driver exige le driver ; passe a 'rpm' ou\n"
+                         L"'auto' dans Logit.ini pour continuer sans driver.",
+                         diagpath);
+                }
+                log_add(L"warning: driver mapping failed; overlay will use "
+                        L"userspace RPM (mem_backend=auto fallback)");
+                ui_status(L"Driver KO. Overlay en mode RPM.");
+                /* Downgrade downstream : skip wait_for_driver, pass rpm to overlay. */
+                strncpy_s(g_mem_backend, _countof(g_mem_backend), "rpm",
+                          _TRUNCATE);
+                skip_map = 1;
+            } else {
+                log_add(L"warning: mapper failed but the driver is live; continuing");
             }
-            log_add(L"warning: mapper failed but the driver is live; continuing");
         }
     }
 
-    if (!dry_run && !no_map) {
+    if (!dry_run && !no_map && !skip_map) {
         wait_for_driver();
         if (g_hide_launcher) {
             if (driver_hide_process(GetCurrentProcessId(), 1)) {
