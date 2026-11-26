@@ -417,7 +417,7 @@ static void draw_vehicle_cham(const RR_PLAYER* p, const RR_CAMERA* cam, int vw, 
     int occluded = 0;
     if (b && b->los_dim) {
         int lv = rr_los_check(cam->pos, p->pos);
-        if (lv == 1) occluded = 1;
+        if (lv == RR_LOS_BLOCKED) occluded = 1;
     }
     RGBA color = elem_col(b, 16, occluded, 0);
     unsigned ca = ((color >> 24) * 80u) / 255u;
@@ -577,11 +577,13 @@ void draw_esp(const RR_PLAYER* arr, int n, const RR_CAMERA* cam, int vw, int vh)
         float by = fminf(hy, fy);
         if (bx < -200 || bx > vw + 200 || by < -200 || by > vh + 200) continue;
 
-        /* LOS : évalué une fois, piloté par br_color via color_occluded + voile 80%. */
+        /* LOS : évalué une fois, piloté par br_color via color_occluded + voile 80%.
+         * rr_los_check rend RR_LOS_BLOCKED(0) / RR_LOS_CLEAR(1) / RR_LOS_UNKNOWN(-1) ;
+         * seul BLOCKED voile, UNKNOWN reste fail-open. */
         int _los_blocked = 0;
         if (b->los_dim && !p->local && !p->is_vehicle && !p->is_loot) {
             int lv = rr_los_check(cam->pos, p->head);
-            if (lv == 1) _los_blocked = 1;
+            if (lv == RR_LOS_BLOCKED) _los_blocked = 1;
         }
         /* Couleur principale du joueur (box) : slot 1, slot 5 si mort, voile si occluded. */
         RGBA col = elem_col(b, 1, _los_blocked, p->dead);
