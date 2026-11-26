@@ -120,14 +120,75 @@ static void rpm_log_target_identity(uint32_t pid, HANDLE h) {
         DWORD e = GetLastError();
         rpm_diag("target pid=%u : QueryFullProcessImageName FAILED err=0x%08lX",
                  pid, e);
+    } else {
+        char exeA[1024];
+        WideCharToMultiByte(CP_UTF8, 0, exepath, -1, exeA, sizeof(exeA), NULL, NULL);
+        DWORD exit_code = 0;
+        BOOL alive = GetExitCodeProcess(h, &exit_code) && exit_code == STILL_ACTIVE;
+        rpm_diag("target pid=%u : image=\"%s\" alive=%s exit_code=0x%08lX",
+                 pid, exeA, alive ? "YES" : "NO (DEAD!)", exit_code);
+    }
+
+    /* Decisive test the reviewer asked for : the handle can look full-rights
+     * because OpenProcess returned success, while an Ob* callback (Byfron,
+     * EAC, Vanguard) silently stripped the DesiredAccess down to a safe subset.
+     * NtQueryObject(ObjectBasicInformation) returns the GrantedAccess the
+     * kernel actually recorded on this handle. Compare against the mask we
+     * passed to OpenProcess : any missing bit was stripped. */
+    typedef struct _RR_PUBLIC_BASIC_INFO {
+        ULONG Attributes;
+        ACCESS_MASK GrantedAccess;
+        ULONG HandleCount;
+        ULONG PointerCount;
+        ULONG PagedPoolCharge;
+        ULONG NonPagedPoolCharge;
+        ULONG Reserved[3];
+        ULONG NameInfoSize;
+        ULONG TypeInfoSize;
+        ULONG SecurityDescriptorSize;
+        LARGE_INTEGER CreationTime;
+    } RR_PUBLIC_BASIC_INFO;
+    typedef NTSTATUS (WINAPI* PFN_NTQO)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+    HMODULE nd = GetModuleHandleW(L"ntdll.dll");
+    PFN_NTQO pQO = nd ? (PFN_NTQO)GetProcAddress(nd, "NtQueryObject") : NULL;
+    if (!pQO) {
+        rpm_diag("handle rights probe : NtQueryObject unresolvable");
         return;
     }
-    char exeA[1024];
-    WideCharToMultiByte(CP_UTF8, 0, exepath, -1, exeA, sizeof(exeA), NULL, NULL);
-    DWORD exit_code = 0;
-    BOOL alive = GetExitCodeProcess(h, &exit_code) && exit_code == STILL_ACTIVE;
-    rpm_diag("target pid=%u : image=\"%s\" alive=%s exit_code=0x%08lX",
-             pid, exeA, alive ? "YES" : "NO (DEAD!)", exit_code);
+    RR_PUBLIC_BASIC_INFO bi;
+    ZeroMemory(&bi, sizeof(bi));
+    ULONG ret = 0;
+    /* ObjectBasicInformation = 0 */
+    NTSTATUS st = pQO(h, 0, &bi, sizeof(bi), &ret);
+    if (st < 0) {
+        rpm_diag("handle rights probe : NtQueryObject FAILED st=0x%08lX",
+                 (unsigned long)st);
+        return;
+    }
+    ACCESS_MASK want = PROCESS_VM_READ | PROCESS_VM_WRITE
+                     | PROCESS_VM_OPERATION
+                     | PROCESS_QUERY_LIMITED_INFORMATION;
+    ACCESS_MASK got_mask = bi.GrantedAccess;
+    rpm_diag("handle rights probe : requested=0x%08lX GrantedAccess=0x%08lX "
+             "(VM_READ=%s VM_WRITE=%s VM_OPERATION=%s QUERY_LIMITED=%s "
+             "QUERY_INFORMATION=%s SYNCHRONIZE=%s)",
+             (unsigned long)want, (unsigned long)got_mask,
+             (got_mask & PROCESS_VM_READ)                 ? "yes" : "NO",
+             (got_mask & PROCESS_VM_WRITE)                ? "yes" : "NO",
+             (got_mask & PROCESS_VM_OPERATION)            ? "yes" : "NO",
+             (got_mask & PROCESS_QUERY_LIMITED_INFORMATION)? "yes" : "NO",
+             (got_mask & PROCESS_QUERY_INFORMATION)       ? "yes" : "NO",
+             (got_mask & SYNCHRONIZE)                     ? "yes" : "NO");
+    ACCESS_MASK stripped = want & ~got_mask;
+    if (stripped) {
+        rpm_diag("handle rights probe : STRIPPED=0x%08lX -- Ob* callback "
+                 "(Byfron/EAC/Vanguard) removed these bits silently",
+                 (unsigned long)stripped);
+    } else {
+        rpm_diag("handle rights probe : no bits stripped, handle really has "
+                 "full requested rights -- any later ACCESS_DENIED is NOT a "
+                 "handle-rights problem");
+    }
 }
 
 /* Fire exactly once per (pid, event) so a tight polling loop doesn't flood
