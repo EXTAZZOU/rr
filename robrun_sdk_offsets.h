@@ -88,4 +88,106 @@
 #define RR_OFF_AIM_BATTLE                0x30u  /* Game.Battle.Entities.Player.Updaters.BattleAimTargetUpdater._battleEntitiesModel */
 #define RR_OFF_AIM_BRAIN                 0x48u  /* Game.Battle.Entities.Player.Updaters.BattleAimTargetUpdater._cinemachineBrain */
 
+/* --- Supplemental offsets from reverse map (rob_run_map.md, dump 2026.11.12.2) ---
+ * Flat-record fields inside the Common/Public/PlayerBattle data blobs. Useful
+ * for any memory reader (driver or DMA) ; not used for a packet-sniff radar. */
+
+/* BattleCharacterCommonData -- gameplay state per character */
+#define RR_OFF_COMMON_ROLE               0x20u   /* Role (int) */
+#define RR_OFF_COMMON_POSITION           0x28u   /* Vector3 Position */
+#define RR_OFF_COMMON_LOOK_DIR           0x30u   /* Vector3 LookDirection */
+#define RR_OFF_COMMON_RX                 0x38u   /* float Rx */
+#define RR_OFF_COMMON_RY                 0x40u   /* float Ry */
+#define RR_OFF_COMMON_RZ                 0x48u   /* float Rz */
+#define RR_OFF_COMMON_IS_FIRING          0x68u   /* bool IsFiring */
+#define RR_OFF_COMMON_SHOT_END_TS        0x70u   /* int ShotEndTs */
+#define RR_OFF_COMMON_IS_SPRINTING       0x88u   /* bool IsSprinting */
+#define RR_OFF_COMMON_IS_CROUCHING       0xA8u   /* bool IsCrouching */
+/* RR_OFF_COMMON_ITEM_IN_HANDS already defined above at 0xB8 */
+#define RR_OFF_COMMON_IS_DEAD            0xE0u   /* bool IsDead */
+#define RR_OFF_COMMON_WEAPON_CLICK_IDX   0xE8u   /* int WeaponClickTickIndex */
+#define RR_OFF_COMMON_VEHICLE_ENTITY_ID  0xF0u   /* int VehicleEntityId (-1 when on foot) */
+#define RR_OFF_COMMON_IS_ARMED           0x108u  /* bool IsArmed */
+#define RR_OFF_COMMON_CUSTOMIZATION      0x110u  /* ref Customization */
+#define RR_OFF_COMMON_ARREST_STATE       0x138u  /* ref ArrestState */
+#define RR_OFF_COMMON_KNOCKOUT_PHASE     0x160u  /* int KnockoutPhase */
+#define RR_OFF_COMMON_BRIBE_COINS        0x218u  /* int BribeCoinsAmount */
+
+/* BattleCharacterPublicData -- shot/weapon surface */
+#define RR_OFF_PUBLIC_SHOT_POSITION      0x20u   /* Vector3 ShotPosition */
+#define RR_OFF_PUBLIC_SHOT_DIRECTION     0x28u   /* Vector3 ShotDirection */
+#define RR_OFF_PUBLIC_SHOT_WEAPON        0x30u   /* ref ShotWeapon */
+#define RR_OFF_PUBLIC_HAS_ARMOR          0x38u   /* bool HasArmor */
+#define RR_OFF_PUBLIC_VEHICLE_TYPE       0x40u   /* int VehicleType */
+#define RR_OFF_PUBLIC_MELEE_SURFACE_HIT  0x48u   /* int MeleeAttackSurfaceHit */
+
+/* BattleCharacterData -- aggregate wrapper */
+#define RR_OFF_BCD_COMMON                0x20u   /* BattleCharacterData.CommonData */
+#define RR_OFF_BCD_PRIVATE               0x28u   /* BattleCharacterData.PrivateData */
+#define RR_OFF_BCD_PUBLIC                0x30u   /* BattleCharacterData.PublicData */
+
+/* PlayerBattleData -- player meta (nicknames, coins, etc.) */
+#define RR_OFF_PLAYER_LAST_KILL_TICK     0x20u   /* int LastKillTickIndex */
+#define RR_OFF_PLAYER_COP_NAME           0x30u   /* ref CopName */
+#define RR_OFF_PLAYER_COP_CLAN_TAG       0x38u   /* ref CopClanTag */
+#define RR_OFF_PLAYER_CRYPTO_COINS       0xB8u   /* int CryptoCoins */
+#define RR_OFF_PLAYER_COINS              0xC0u   /* int Coins */
+#define RR_OFF_PLAYER_KILLER_NAME        0xF0u   /* ref KillerName */
+#define RR_OFF_PLAYER_DEATH_REASON       0x108u  /* int DeathReason */
+#define RR_OFF_PLAYER_IMPRISONMENT_YRS   0x1C0u  /* int ImprisonmentYears */
+#define RR_OFF_PLAYER_EOS_CLIENT_URL     0x2A8u  /* ref EOSClientBaseUrl */
+#define RR_OFF_PLAYER_EOS_ROOM_TOKEN     0x2B0u  /* ref EOSRoomToken */
+#define RR_OFF_PLAYER_VIP_END_TS         0x2F0u  /* int VipEndTs */
+
+/* CarData -- full car state block (complement to RR_OFF_CAR_* above which are
+ * from the CarModel wrapper ; these are the raw Data struct offsets). */
+#define RR_OFF_CARDATA_DESCRIPTION       0x20u   /* ref Description */
+#define RR_OFF_CARDATA_POSITION          0x30u   /* Vector3 Position */
+#define RR_OFF_CARDATA_ORIENTATION       0x38u   /* Vector4 Orientation */
+#define RR_OFF_CARDATA_LINEAR_VELOCITY   0x40u   /* Vector3 LinearVelocity */
+#define RR_OFF_CARDATA_ANGULAR_VELOCITY  0x48u   /* Vector3 AngularVelocity */
+#define RR_OFF_CARDATA_ENGINE_ACTIVE     0xF0u   /* bool EngineActive */
+#define RR_OFF_CARDATA_IS_DROWNED        0xF8u   /* bool IsDrowned */
+#define RR_OFF_CARDATA_IS_UNOWNED        0x108u  /* bool IsUnowned */
+#define RR_OFF_CARDATA_OWNER_PUBLIC_ID   0x110u  /* int OwnerPublicId */
+#define RR_OFF_CARDATA_OWNER_ROLE        0x118u  /* int OwnerRole */
+#define RR_OFF_CARDATA_TRUNK_BREACH      0x140u  /* ref TrunkBreachData */
+
+/* GrenadeData */
+#define RR_OFF_GRENADE_DESCRIPTION       0x20u   /* ref Description */
+#define RR_OFF_GRENADE_SOURCE_POSITION   0x28u   /* Vector3 SourcePosition */
+#define RR_OFF_GRENADE_SOURCE_VELOCITY   0x30u   /* Vector3 SourceVelocity */
+#define RR_OFF_GRENADE_SOURCE_TS         0x38u   /* int SourceTs */
+#define RR_OFF_GRENADE_IS_SLEEPING       0x40u   /* bool IsSleeping */
+#define RR_OFF_GRENADE_IS_TRIGGERED      0x48u   /* bool IsTriggered */
+#define RR_OFF_GRENADE_OWNER_PUBLIC_ID   0x50u   /* int OwnerPublicId */
+
+/* CargoData */
+#define RR_OFF_CARGO_DESCRIPTION         0x20u   /* ref Description */
+#define RR_OFF_CARGO_CUMULATIVE_POINTS   0x28u   /* int CumulativePoints */
+
+/* MapVisibleEntityData -- integer coordinates (not Vector3) */
+#define RR_OFF_MAPVIS_X                  0x20u   /* int X */
+#define RR_OFF_MAPVIS_Z                  0x28u   /* int Z */
+#define RR_OFF_MAPVIS_ENTITY_ID          0x30u   /* int EntityId */
+
+/* BattleInputData -- outbound input struct, 0xF8 bytes total */
+#define RR_OFF_INPUT_TS                  0x00u   /* int Ts */
+#define RR_OFF_INPUT_IS_MOVE             0x08u   /* bool IsMoveInput */
+#define RR_OFF_INPUT_X                   0x0Cu   /* float X */
+#define RR_OFF_INPUT_Y                   0x10u   /* float Y */
+#define RR_OFF_INPUT_IS_LOOK_DIR         0x14u   /* bool IsLookDirectionInput */
+#define RR_OFF_INPUT_LX                  0x18u   /* float Lx */
+#define RR_OFF_INPUT_LY                  0x1Cu   /* float Ly */
+#define RR_OFF_INPUT_IS_TILT             0x20u   /* bool IsTiltInput */
+#define RR_OFF_INPUT_TILT_X              0x24u   /* float TiltX */
+#define RR_OFF_INPUT_TILT_Y              0x28u   /* float TiltY */
+#define RR_OFF_INPUT_IS_SHOT             0x2Cu   /* bool IsShotInput */
+#define RR_OFF_INPUT_IS_FIRST_SHOT_Q     0x2Du   /* bool IsFirstShotInQueue */
+#define RR_OFF_INPUT_SHOT_PLAYER_OFFSET  0x30u   /* int ShotPlayerTimeOffset */
+#define RR_OFF_INPUT_SHOT_SIM_OFFSET     0x34u   /* int ShotSimulatedTimeOffset */
+#define RR_OFF_INPUT_SHOT_LOOK_OFFSET    0x38u   /* int ShotLookOffset */
+#define RR_OFF_INPUT_IS_ROLLBACK         0x3Cu   /* bool IsRollbackValueInput */
+#define RR_OFF_INPUT_ROLLBACK_VALUE      0x40u   /* int RollbackValue */
+
 #endif /* ROBRUN_SDK_OFFSETS_H */
